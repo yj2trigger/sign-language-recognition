@@ -40,8 +40,20 @@ class TCNNet(nn.Module):
         return self.head(torch.cat([h.mean(2), h.amax(2)], dim=1))
 
 
+class MLPBase(nn.Module):
+    """기준선: 시간 순서를 버리고 프레임 특징의 평균·최대만 쓰는 MLP. GRU·TCN 이 이보다 얼마나 나은지가 '순서 모델링의 이득'이다."""
+
+    def __init__(self, n_feat, n_class, hidden=256, dropout=0.3):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(2 * n_feat, hidden), nn.LayerNorm(hidden), nn.GELU(), nn.Dropout(dropout),
+                                 nn.Linear(hidden, n_class))
+
+    def forward(self, x):
+        return self.net(torch.cat([x.mean(1), x.amax(1)], dim=1))
+
+
 def build(name, n_feat, n_class):
-    return {"gru": GRUNet, "tcn": TCNNet}[name](n_feat, n_class)
+    return {"gru": GRUNet, "tcn": TCNNet, "mlp": MLPBase}[name](n_feat, n_class)
 
 
 def n_params(model):

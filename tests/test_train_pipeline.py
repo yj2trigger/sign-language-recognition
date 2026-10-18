@@ -54,6 +54,11 @@ def test_models_shape_and_comparable_size():
         sizes[name] = models.n_params(m)
     assert abs(sizes["gru"] - sizes["tcn"]) / max(sizes.values()) < 0.2, sizes          # 파라미터 수 20% 이내
     assert 100_000 < min(sizes.values()) and max(sizes.values()) < 400_000, sizes
+    base = models.build("mlp", 243, 100)                                                 # 기준선은 시간 순서를 안 쓰므로 순서를 바꿔도 출력이 같다
+    base.eval()
+    assert base(x).shape == (4, 100)
+    r = torch.randn(2, 64, 243)
+    assert torch.allclose(base(r), base(r[:, torch.randperm(64)]), atol=1e-5)
 
 
 def test_augment_does_not_mutate_and_keeps_shapes():
