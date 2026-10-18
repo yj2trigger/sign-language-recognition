@@ -23,8 +23,17 @@ def load_clips(feature_dirs, word_ids):
     return clips
 
 
-def augment(xy, mask, rng):
-    """시간 속도 변화(구간 일부만 쓰기), 좌표 잡음, 작은 회전, 프레임 결측. 입력은 건드리지 않고 새 배열을 돌려준다."""
+def subsample(xy, mask, ratio):
+    """프레임 간격을 ratio 배로 키운다(1.5 = 30fps -> 20fps). 낮은 fps 카메라 입력을 흉내 내는 데 쓴다."""
+    idx = np.unique(np.clip(np.round(np.arange(0, len(xy), ratio)).astype(int), 0, len(xy) - 1))
+    return xy[idx], mask[idx]
+
+
+def augment(xy, mask, rng, fps_aug=False):
+    """시간 속도 변화(구간 일부만 쓰기), 좌표 잡음, 작은 회전, 프레임 결측. 입력은 건드리지 않고 새 배열을 돌려준다.
+    fps_aug 이면 절반쯤은 먼저 20fps 로 낮춘다(30fps 로 학습한 모델이 낮은 fps 입력에 견디게)."""
+    if fps_aug and rng.random() < 0.5:
+        xy, mask = subsample(xy, mask, 1.5)
     n = len(xy)
     keep = max(8, int(round(n * rng.uniform(0.8, 1.0))))      # 구간을 줄여 쓰면 리샘플 뒤 속도가 빨라진다
     s = rng.integers(0, n - keep + 1)
@@ -39,12 +48,18 @@ def augment(xy, mask, rng):
     return xy, mask
 
 
-def to_arrays(clips, classes, length, with_hand_rel=True, rng=None):
-    """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다."""
+def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.0, fps_aug=False):
+    """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다.
+    fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용)."""
     index = {w: i for i, w in enumerate(classes)}
     X, y, sg = [], [], []
     for c in clips:
-        xy, mask = (augment(c["xy"], c["mask"], rng) if rng is not None else (c["xy"], c["mask"]))
+        if rng is not None:
+            xy, mask = augment(c["xy"], c["mask"], rng, fps_aug)
+        elif fps_ratio != 1.0:
+            xy, mask = subsample(c["xy"], c["mask"], fps_ratio)
+        else:
+            xy, mask = c["xy"], c["mask"]
         f = pp.build_features(xy, mask, length, with_hand_rel=with_hand_rel)
         if f is None:
             continue
@@ -54,13 +69,13 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None):
     return np.stack(X), np.array(y, dtype=np.int64), np.array(sg)     # Windows 의 numpy 기본 정수는 int32 라 torch 손실 함수가 거부한다
 
 
-def augmented_bank(clips, classes, length, with_hand_rel, k, seed):
+def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
     rng = np.random.default_rng(seed)
     banks = []
     for _ in range(k):
-        X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng)
+        X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug)
         banks.append(X)
     return np.stack(banks), y
 

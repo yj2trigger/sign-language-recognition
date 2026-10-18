@@ -91,11 +91,14 @@ def main():
     ap.add_argument("--patience", type=int, default=12)
     ap.add_argument("--length", type=int, default=64)
     ap.add_argument("--bank", type=int, default=8, help="미리 만들 증강본 벌 수")
+    ap.add_argument("--fps-aug", action="store_true", help="학습 증강에 20fps 흉내(프레임 건너뛰기)를 섞는다")
+    ap.add_argument("--test-ratio", type=float, default=1.0, help="검증·시험 클립의 프레임 간격 배수(1.5 = 20fps 카메라 흉내)")
     ap.add_argument("--no-hand-rel", action="store_true")
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
-           "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank}
+           "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
+           "fps_aug": a.fps_aug, "test_ratio": a.test_ratio}
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
@@ -116,9 +119,9 @@ def main():
 
     for fi, fold in enumerate(folds[:a.max_folds] if a.max_folds else folds):
         sel = lambda names: [c for c in clips if c["signer"] in set(fold[names])]
-        va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"])
-        te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"])
-        bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi)
+        va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"])
+        te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"])
+        bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi, fps_aug=cfg["fps_aug"])
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 t = time.time()

@@ -68,6 +68,18 @@ def test_augment_does_not_mutate_and_keeps_shapes():
     assert np.array_equal(before, c["xy"]) and xy.shape[1:] == (53, 2) and 8 <= len(xy) <= len(before)
 
 
+def test_subsample_emulates_lower_fps():
+    c = synthetic_clips(1, 1, T=90)[0]
+    xy, mask = ds.subsample(c["xy"], c["mask"], 1.5)
+    assert len(xy) == 60 and len(mask) == 60                      # 30fps 90프레임 -> 20fps 60프레임(같은 길이의 시간)
+    assert np.array_equal(xy[1], c["xy"][2])                       # 두 번째 프레임은 원본 2번(1.5 를 반올림)
+    X1, _, _ = ds.to_arrays([c], [c["word"]], 64)
+    X2, _, _ = ds.to_arrays([c], [c["word"]], 64, fps_ratio=1.5)
+    assert X1.shape == X2.shape == (1, 64, 243)                    # 길이를 64 로 맞추므로 fps 가 달라도 모양은 같다
+    X3, _, _ = ds.to_arrays([c], [c["word"]], 64, rng=np.random.default_rng(0), fps_aug=True)
+    assert X3.shape == (1, 64, 243)
+
+
 def test_train_one_learns_synthetic_task():
     clips = synthetic_clips()
     classes = [100 + k for k in range(5)]
