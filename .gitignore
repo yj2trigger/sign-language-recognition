@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# 원본 영상·대용량 좌표 배열은 D:\sign-language-data 에 두고 레포에 올리지 않는다
+data/
+*.mp4
+*.avi
+*.7z
+*.zip
+*.npy
+*.npz
+*.pt
