@@ -32,12 +32,12 @@ def draw_frame(ax, xy, mask, title):
     for a, b in ARMS + HEAD:
         if mask[a] and mask[b]:
             ax.plot(xy[[a, b], 0], xy[[a, b], 1], "-", color="#555", lw=1.5)
-    ax.scatter(xy[0:1, 0], xy[0:1, 1], s=60, color="#555")                 # 코
+    ax.scatter(xy[0:1, 0], xy[0:1, 1], s=25, color="#555")                 # 코
     for off, color in ((11, "#d1495b"), (32, "#2e86ab")):                  # 왼손 빨강, 오른손 파랑
         if mask[off]:
             for a, b in HAND:
                 ax.plot(xy[[off + a, off + b], 0], xy[[off + a, off + b], 1], "-", color=color, lw=1)
-            ax.scatter(xy[off:off + 21, 0], xy[off:off + 21, 1], s=8, color=color)
+            ax.scatter(xy[off:off + 21, 0], xy[off:off + 21, 1], s=3, color=color)
     ax.set_xlim(0.15, 0.85)
     ax.set_ylim(1.0, 0.05)       # 이미지 좌표(y가 아래로 증가)
     ax.set_aspect("equal")
