@@ -123,8 +123,11 @@ def main():
             for seed in (int(s) for s in a.seeds.split(",")):
                 t = time.time()
                 model, best, hist = train_one(name, bank, va[:2], classes, cfg, seed)
+                logits = predict(model, te[0])
                 res = {"model": name, "fold": fi, "seed": seed, "params": models.n_params(model),
-                       "val_macro_f1": best, "test": metrics(predict(model, te[0]), te[1]),
+                       "val_macro_f1": best, "test": metrics(logits, te[1]),
+                       "test_true": te[1].tolist(), "test_pred": logits.argmax(1).tolist(),   # 혼동 분석용(클래스 인덱스, classes 정렬 순서)
+                       "test_signer": te[2].tolist(),
                        "epochs_run": len(hist), "train_sec": round(time.time() - t, 1), "val_curve": hist,
                        "split": fold, "split_sha": split_hash, "classes_sha": class_hash,
                        "n_classes": len(classes), "config": cfg, "git": git}
