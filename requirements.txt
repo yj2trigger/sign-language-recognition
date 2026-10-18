@@ -1,6 +1,8 @@
-mediapipe==1.1.1
-opencv-python==5.0.0.93
-numpy==2.5.4
+# Python 3.12 필요. mediapipe 는 구형 API(mp.solutions.holistic)를 쓰므로 0.10.21 로 고정한다.
+# (신형 mediapipe 에는 이 API 가 없다. 이유는 src/landmarks.py 머리말)
+mediapipe==0.10.21
+opencv-python-headless==4.11.0.86
+numpy==1.26.4
 scikit-learn==1.9.1
 matplotlib==3.11.2
 py7zr==1.1.4
