@@ -1,7 +1,8 @@
 """AI-Hub 103 단어 영상 zip 의 정면(F) 영상에서 라벨 구간의 좌표를 뽑아 클립별 npz 로 저장한다.
 
-사용: python src/build_dataset.py <영상zip> <라벨zip> <출력폴더> [프로세스 수=4] [complexity=1] [limit=0]
+사용: python src/build_dataset.py <영상zip> <라벨zip> <출력폴더> [프로세스 수=4] [complexity=1] [limit=0] [클래스 json]
 이미 만든 클립은 건너뛰므로 중단 후 다시 실행해도 이어서 진행한다. limit>0 이면 앞에서 그만큼만 처리한다.
+클래스 json(select_classes.py 출력)을 주면 그 단어 번호의 클립만 처리한다.
 npz 내용: xy (T,53,2) float32, mask (T,53) bool, fps, gloss(문자열), word_id, signer, complexity.
 출력은 원본에서 만든 가공 데이터이므로 레포에 올리지 않고 D:\\sign-language-data 아래에만 둔다.
 """
@@ -60,10 +61,16 @@ def main():
     procs = int(sys.argv[4]) if len(sys.argv) > 4 else 4
     cx = int(sys.argv[5]) if len(sys.argv) > 5 else 1
     limit = int(sys.argv[6]) if len(sys.argv) > 6 else 0
+    words = None
+    if len(sys.argv) > 7:       # select_classes.py 가 만든 json: 이 단어 번호의 클립만 처리한다
+        with open(sys.argv[7], encoding="utf-8") as f:
+            words = set(json.load(f)["word_ids"])
     os.makedirs(out, exist_ok=True)
     # 워커 초기화에서 예외가 나면 Pool 이 오류를 보이지 않고 워커를 계속 다시 만든다. 부모에서 먼저 열어 즉시 실패시킨다.
     zipfile.ZipFile(lab).close()
     names = sorted(n for n in zipfile.ZipFile(vid).namelist() if n.endswith("_F.mp4"))
+    if words is not None:
+        names = [n for n in names if int(NAME.match(os.path.basename(n)[:-4]).group(1)) in words]
     if limit:
         names = names[:limit]
     print("대상 %d개, 프로세스 %d, complexity %d" % (len(names), procs, cx), flush=True)

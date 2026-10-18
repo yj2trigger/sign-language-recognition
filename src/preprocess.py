@@ -38,6 +38,9 @@ def fill_missing(xy, mask, max_gap=5):
     t = np.arange(len(xy))
     for p in range(xy.shape[1]):
         valid = mask[:, p]
+        if valid.all():
+            out[:, p] = xy[:, p]                 # 결측이 없는 점은 그대로(대부분의 점이 여기에 해당)
+            continue
         if not valid.any():
             continue
         held = _hold_nearest(xy[:, p], valid)
@@ -91,5 +94,5 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True):
     if with_hand_rel:
         parts.append(hand_relative(filled, mask).reshape(len(filled), -1))
     parts.append(mask.astype(np.float32))
-    feat = np.concatenate(parts, axis=1).astype(np.float32)
-    return resample(feat, length)
+    feat = np.concatenate(parts, axis=1)
+    return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다

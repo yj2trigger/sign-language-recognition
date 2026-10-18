@@ -47,6 +47,7 @@ def test_features_shape_and_finite():
     mask[:, 32:53] = False      # 오른손 안 보임
     f = pp.build_features(xy, mask, length=32)
     assert f.shape == (32, 106 + 84 + 53)
+    assert f.dtype == np.float32                        # torch 가 float32 만 받는다(보간 때문에 float64 가 되기 쉬움)
     assert np.isfinite(f).all()
     assert (f[:, 106 + 42:106 + 84] == 0).all()         # 안 보인 오른손의 상대 좌표는 0
     assert pp.build_features(xy, mask, 32, with_hand_rel=False).shape == (32, 106 + 53)
