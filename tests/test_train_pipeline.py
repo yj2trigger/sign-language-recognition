@@ -83,6 +83,21 @@ def test_pos_aug_moves_hands_only_and_default_unchanged():
     assert np.array_equal(xy, c["xy"])                                # 입력은 바뀌지 않음
 
 
+def test_augment_crops_z_with_same_frames():
+    c = synthetic_clips(1, 1)[0]
+    z = np.repeat(np.arange(60, dtype=np.float32)[:, None], 53, 1)    # z 에 프레임 번호를 넣어 둠
+    a = ds.augment(c["xy"], c["mask"], np.random.default_rng(3))
+    b = ds.augment(c["xy"], c["mask"], np.random.default_rng(3), z=z)
+    assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])  # z 를 줘도 x·y 증강 결과는 같다(난수 추가 사용 없음)
+    zz = b[2][:, 0]
+    assert len(zz) == len(b[0]) and np.array_equal(zz, np.arange(zz[0], zz[0] + len(zz)))   # 같은 연속 구간으로 잘림
+    _, _, zs = ds.subsample(c["xy"], c["mask"], 1.5, z=z)
+    assert np.array_equal(zs[:3, 0], [0, 2, 3])                     # fps 건너뛰기도 같은 인덱스(0, 1.5→2, 3)
+    cz = dict(c, z=z, aspect=16 / 9)
+    X, _, _ = ds.to_arrays([cz], [c["word"]], 64, hand_z=True)
+    assert X.shape == (1, 64, 243 + 42)
+
+
 def test_subsample_emulates_lower_fps():
     c = synthetic_clips(1, 1, T=90)[0]
     xy, mask = ds.subsample(c["xy"], c["mask"], 1.5)

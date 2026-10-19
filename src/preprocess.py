@@ -136,10 +136,25 @@ def bone_ratios(xy, mask):
     return np.concatenate(parts, axis=1)
 
 
+def hand_depth(xy, z, mask, aspect):
+    """손가락 21점의 깊이(MediaPipe z, 손목 기준)를 손 크기로 나눈 값. 손 크기는 손목~가운뎃손가락 뿌리의 화면 거리를
+    화면 너비 단위로 잰다(MediaPipe 손 z 는 x 와 같은 너비 단위라서, y 는 aspect=너비/높이 로 나눠 너비 단위로 맞춤).
+    안 보인 손·프레임은 0. 정규화 전 원래 좌표(xy, 0~1)를 받는다. 반환 (T, 42)"""
+    parts = []
+    for s in HAND_STARTS:
+        h = xy[:, s:s + 21]
+        size = np.sqrt((h[:, MIDDLE_MCP, 0] - h[:, 0, 0]) ** 2 + ((h[:, MIDDLE_MCP, 1] - h[:, 0, 1]) / aspect) ** 2)
+        ok = mask[:, s] & (size > 1e-6)
+        rel = (z[:, s:s + 21] - z[:, s:s + 1]) / np.where(ok, size, 1.0)[:, None]
+        rel = np.clip(rel, -5.0, 5.0)        # 손이 옆으로 서서 화면 속 손 크기가 거의 0이면 비율이 폭발한다(실측 최대 18.8, 99% 구간 -2.9~0.2)
+        parts.append(np.where(ok[:, None], rel, 0.0))
+    return np.concatenate(parts, axis=1)
+
+
 def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False,
-                   with_bones=False, origin="shoulder"):
+                   with_bones=False, origin="shoulder", z=None, aspect=16 / 9, with_hand_z=False):
     """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4]
-    + [손 뼈대 길이 비율 40] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
+    + [손 뼈대 길이 비율 40] + [손 깊이 42] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
     norm = normalize(xy, mask, origin)
     if norm is None:
         return None
@@ -153,6 +168,8 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=
         parts.append(wrist_trajectory(filled, mask))
     if with_bones:
         parts.append(bone_ratios(filled, mask))
+    if with_hand_z:
+        parts.append(hand_depth(xy, z, mask, aspect))
     parts.append(mask.astype(np.float32))
     feat = np.concatenate(parts, axis=1)
     return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다

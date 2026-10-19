@@ -18,41 +18,49 @@ MIN_VISIBILITY = 0.5
 
 
 def _frame(res):
+    """반환: xy (53,2), mask (53,), z (53,). z 는 MediaPipe 의 깊이 값(손은 손목 기준, x 와 비슷한 화면 너비 단위)."""
     xy = np.zeros((N_POINTS, 2), np.float32)
+    z = np.zeros(N_POINTS, np.float32)
     mask = np.zeros(N_POINTS, bool)
     if res.pose_landmarks:
         pose = res.pose_landmarks.landmark
         for k, idx in enumerate(POSE_IDX):
             xy[k] = (pose[idx].x, pose[idx].y)
+            z[k] = pose[idx].z
             mask[k] = pose[idx].visibility >= MIN_VISIBILITY
     for start, hand in ((11, res.left_hand_landmarks), (32, res.right_hand_landmarks)):
         if hand:
             xy[start:start + 21] = [(p.x, p.y) for p in hand.landmark]
+            z[start:start + 21] = [p.z for p in hand.landmark]
             mask[start:start + 21] = True
-    return xy, mask
+    return xy, mask, z
 
 
-def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1):
+def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=False):
     """[start_s - margin_s, end_s + margin_s] 구간의 프레임에서 좌표를 뽑는다.
-    반환: (xy (T,53,2), mask (T,53), fps). 읽은 프레임이 없으면 None.
+    반환: (xy (T,53,2), mask (T,53), fps). with_z 이면 (xy, mask, fps, z (T,53), (화면 너비, 높이)). 읽은 프레임이 없으면 None.
     클립마다 새 Holistic 을 만들어 앞 클립의 추적 상태가 섞이지 않게 한다."""
     cap = cv2.VideoCapture(str(video_path).replace("\\", "/"))
     try:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        wh = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         t0 = max(0.0, start_s - margin_s)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(t0 * fps)))
         n = int(round((end_s + margin_s - t0) * fps)) + 1
-        xys, masks = [], []
+        xys, masks, zs = [], [], []
         with mp.solutions.holistic.Holistic(static_image_mode=False, model_complexity=complexity) as holistic:
             for _ in range(n):
                 ok, bgr = cap.read()
                 if not ok:
                     break
-                xy, mask = _frame(holistic.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)))
+                xy, mask, z = _frame(holistic.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)))
                 xys.append(xy)
                 masks.append(mask)
+                zs.append(z)
     finally:
         cap.release()
     if not xys:
         return None
+    if with_z:
+        return np.stack(xys), np.stack(masks), fps, np.stack(zs), wh
     return np.stack(xys), np.stack(masks), fps

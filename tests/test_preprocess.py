@@ -100,6 +100,22 @@ def test_nose_origin():
     assert f.shape == (32, 106 + 84 + 40 + 53) and f.dtype == np.float32
 
 
+def test_hand_depth_scaled_by_hand_size_with_aspect():
+    xy, mask = make_clip()
+    z = np.zeros((20, 53), np.float32)
+    xy[:, 32] = (0.5, 0.5)                                  # 오른손목
+    xy[:, 32 + 9] = (0.5, 0.5 + 0.03 * 16 / 9)            # 가운뎃손가락 뿌리: 세로로 화면 너비 단위 0.03 떨어짐(16:9)
+    z[:, 32 + 8] = -0.03                                    # 검지 끝이 손목보다 손 크기만큼 카메라 쪽
+    d = pp.hand_depth(xy, z, mask, aspect=16 / 9)
+    assert d.shape == (20, 42)
+    assert np.allclose(d[:, 21 + 8], -1.0, atol=1e-5)       # 손 크기 단위로 -1
+    assert np.allclose(d[:, 21 + 0], 0.0)                   # 손목 자신은 0
+    mask[:, 32:53] = False
+    assert (pp.hand_depth(xy, z, mask, 16 / 9)[:, 21:] == 0).all()   # 안 보인 손은 0
+    f = pp.build_features(xy, mask, 32, z=z, with_hand_z=True)
+    assert f.shape == (32, 106 + 84 + 42 + 53) and f.dtype == np.float32
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

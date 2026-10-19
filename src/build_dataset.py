@@ -3,7 +3,7 @@
 사용: python src/build_dataset.py <영상zip> <라벨zip> <출력폴더> [프로세스 수=4] [complexity=1] [limit=0] [클래스 json]
 이미 만든 클립은 건너뛰므로 중단 후 다시 실행해도 이어서 진행한다. limit>0 이면 앞에서 그만큼만 처리한다.
 클래스 json(select_classes.py 출력)을 주면 그 단어 번호의 클립만 처리한다.
-npz 내용: xy (T,53,2) float32, mask (T,53) bool, fps, gloss(문자열), word_id, signer, complexity.
+npz 내용: xy (T,53,2) float32, mask (T,53) bool, fps, gloss(문자열), word_id, signer, complexity, z (T,53), wh(화면 너비·높이).
 출력은 원본에서 만든 가공 데이터이므로 레포에 올리지 않고 D:\\sign-language-data 아래에만 둔다.
 """
 import json
@@ -43,15 +43,16 @@ def _work(name):
     seg = lab["data"][0]
     path = _zv.extract(name, _tmp)
     try:
-        res = landmarks.extract_clip(path, seg["start"], seg["end"], complexity=_cx)
+        res = landmarks.extract_clip(path, seg["start"], seg["end"], complexity=_cx, with_z=True)
     finally:
         os.remove(path)
     if res is None:
         return base, "empty"
-    xy, mask, fps = res
+    xy, mask, fps, z, wh = res
     part = os.path.join(_out, base + ".tmp.npz")   # 쓰는 도중 중단돼도 불완전한 파일이 남지 않게
     np.savez(part, xy=xy, mask=mask, fps=fps, gloss=seg["attributes"][0]["name"],
-             word_id=int(word), signer=int(signer), complexity=_cx)
+             word_id=int(word), signer=int(signer), complexity=_cx,
+             z=z, wh=np.array(wh))                  # z: MediaPipe 깊이 값, wh: 화면 (너비, 높이) — 화면비 보정용(C-16)
     os.replace(part, dst)
     return base, "ok"
 
