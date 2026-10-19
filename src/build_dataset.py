@@ -17,6 +17,7 @@ from multiprocessing import Pool
 import numpy as np
 
 import landmarks
+from winpower import keep_awake, no_power_throttling
 
 NAME = re.compile(r"NIA_SL_WORD(\d+)_REAL(\d+)_F$")
 _zv = _zl = None
@@ -74,7 +75,8 @@ def main():
         names = [n for n in names if int(NAME.match(os.path.basename(n)[:-4]).group(1)) in words]
     if limit:
         names = names[:limit]
-    print("대상 %d개, 프로세스 %d, complexity %d" % (len(names), procs, cx), flush=True)
+    print("대상 %d개, 프로세스 %d, complexity %d | 효율 모드 제외 %s, 절전 방지 %s" % (
+        len(names), procs, cx, no_power_throttling(), keep_awake()), flush=True)
     counts, t0 = {}, time.time()
     with Pool(procs, _init, (vid, lab, out, cx)) as pool:
         for i, (base, status) in enumerate(pool.imap_unordered(_work, names, chunksize=4), 1):
