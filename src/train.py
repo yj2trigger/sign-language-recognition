@@ -119,14 +119,16 @@ def main():
     ap.add_argument("--angles", action="store_true", help="손가락 관절 각도 채널(30)을 더한다")
     ap.add_argument("--traj", action="store_true", help="평균 위치를 뺀 손목 궤적 채널(4)을 더한다")
     ap.add_argument("--pos-aug", action="store_true", help="학습 증강에 두 손 위치 이동(어깨너비 ±30%)을 섞는다")
+    ap.add_argument("--bones", action="store_true", help="손 뼈대 길이 비율 채널(40, 2D 로 근사한 깊이 방향 기울기)을 더한다")
+    ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
     print("효율 모드 제외 요청:", "성공" if no_power_throttling() else "적용 안 됨", flush=True)
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
            "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
-           "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug}
-    feat = {"angles": a.angles, "traj": a.traj}
+           "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin}
+    feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin}
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])

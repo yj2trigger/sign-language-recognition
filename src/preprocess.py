@@ -19,14 +19,21 @@ def _hold_nearest(x, valid):
     return x[idx]
 
 
-def normalize(xy, mask):
-    """어깨 중점을 원점, 어깨너비를 1로. 어깨가 안 보인 프레임은 가까운 유효 프레임 값을 쓴다.
-    어깨가 한 번도 유효하지 않으면 None."""
+NOSE = 0
+
+
+def normalize(xy, mask, origin="shoulder"):
+    """원점(어깨 중점 또는 코)을 0, 어깨너비를 1로. 기준점이 안 보인 프레임은 가까운 유효 프레임 값을 쓴다.
+    origin="nose" 는 얼굴 기준이다. 수행자마다 어깨와 얼굴 사이 간격(자세·체형)이 달라 어깨 기준이면 손 높이가 달라 보이는
+    차이를 줄이려는 것(T-025 후속). 코가 한 번도 안 보이면 어깨 중점으로 대신한다. 어깨가 한 번도 유효하지 않으면 None."""
     width = np.linalg.norm(xy[:, L_SH] - xy[:, R_SH], axis=-1)
     valid = mask[:, L_SH] & mask[:, R_SH] & (width > 1e-6)
     if not valid.any():
         return None
-    center = _hold_nearest((xy[:, L_SH] + xy[:, R_SH]) / 2, valid)
+    if origin == "nose" and mask[:, NOSE].any():
+        center = _hold_nearest(xy[:, NOSE], mask[:, NOSE])
+    else:
+        center = _hold_nearest((xy[:, L_SH] + xy[:, R_SH]) / 2, valid)
     scale = _hold_nearest(width, valid)
     return (xy - center[:, None, :]) / scale[:, None, None]
 
@@ -112,10 +119,28 @@ def wrist_trajectory(xy, mask):
     return np.concatenate(parts, axis=1)
 
 
-def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False):
-    """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4] + 마스크 53.
-    어깨가 한 번도 안 보인 클립은 None."""
-    norm = normalize(xy, mask)
+HAND_BONES = [(a, b) for f in ((0, 1, 2, 3, 4), (0, 5, 6, 7, 8), (0, 9, 10, 11, 12), (0, 13, 14, 15, 16), (0, 17, 18, 19, 20))
+              for a, b in zip(f, f[1:])]   # 손 뼈대 20개
+
+
+def bone_ratios(xy, mask):
+    """손 뼈대 20개 x 두 손의 '현재 화면 길이 / 클립 안 최대 화면 길이'. 손가락이 카메라 쪽으로 기울면 화면에서 짧아지므로
+    2D 좌표만으로 깊이 방향 기울기를 근사한다(앞뒤 부호는 모름). 손 크기·위치에 영향받지 않는다. 안 보인 손은 0. 반환 (T, 40)"""
+    parts = []
+    for s in HAND_STARTS:
+        h = xy[:, s:s + 21]
+        ln = np.stack([np.linalg.norm(h[:, b] - h[:, a], axis=-1) for a, b in HAND_BONES], 1)
+        ok = mask[:, s]
+        mx = ln[ok].max(0) if ok.any() else np.ones(len(HAND_BONES))
+        parts.append(np.where(ok[:, None], ln / np.maximum(mx, 1e-9), 0.0))
+    return np.concatenate(parts, axis=1)
+
+
+def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False,
+                   with_bones=False, origin="shoulder"):
+    """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4]
+    + [손 뼈대 길이 비율 40] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
+    norm = normalize(xy, mask, origin)
     if norm is None:
         return None
     filled = fill_missing(norm, mask, max_gap)
@@ -126,6 +151,8 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=
         parts.append(finger_angles(filled, mask))
     if with_traj:
         parts.append(wrist_trajectory(filled, mask))
+    if with_bones:
+        parts.append(bone_ratios(filled, mask))
     parts.append(mask.astype(np.float32))
     feat = np.concatenate(parts, axis=1)
     return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다

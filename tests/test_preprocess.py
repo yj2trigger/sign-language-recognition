@@ -76,6 +76,30 @@ def test_trajectory_removes_position():
     assert f.shape == (32, 106 + 84 + 30 + 4 + 53) and f.dtype == np.float32
 
 
+def test_bone_ratios_detect_foreshortening():
+    xy, mask = make_clip()
+    xy[:, 11:32] = np.stack([np.linspace(0.5, 0.6, 21), np.full(21, 0.7)], 1)
+    xy[10:, 15] = xy[10:, 14] + (xy[10:, 15] - xy[10:, 14]) * 0.5   # 뒤쪽 프레임에서 엄지 끝 마디(3-4)가 화면에서 절반으로 짧아짐
+    r = pp.bone_ratios(xy, mask)
+    assert r.shape == (20, 40)
+    assert np.allclose(r[:10, 3], 1.0) and np.allclose(r[10:, 3], 0.5)    # 뼈대 3번 = (3, 4)
+    assert np.allclose(r[:, 0], 1.0)                                      # 다른 뼈대는 그대로
+    big = xy.copy(); big[:, 11:32] = (xy[:, 11:32] - 0.5) * 2 + 0.3
+    assert np.allclose(pp.bone_ratios(big, mask)[:, :20], r[:, :20])      # 손 크기·위치에 영향받지 않음
+
+
+def test_nose_origin():
+    xy, mask = make_clip()
+    xy[:, 0] = (0.5, 0.3)                                                 # 코
+    n = pp.normalize(xy, mask, origin="nose")
+    assert np.allclose(n[:, 0], 0, atol=1e-6)                             # 코가 원점
+    assert np.allclose(np.linalg.norm(n[:, pp.L_SH] - n[:, pp.R_SH], axis=-1), 1, atol=1e-5)   # 크기 기준은 어깨너비 그대로
+    mask[:, 0] = False
+    assert np.allclose(pp.normalize(xy, mask, origin="nose"), pp.normalize(xy, mask))   # 코가 안 보이면 어깨 기준으로 대신
+    f = pp.build_features(xy, mask, 32, with_bones=True, origin="nose")
+    assert f.shape == (32, 106 + 84 + 40 + 53) and f.dtype == np.float32
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
