@@ -75,7 +75,7 @@ def augment(xy, mask, rng, fps_aug=False, pos_aug=False, z=None):
 
 
 def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.0, fps_aug=False,
-              angles=False, traj=False, pos_aug=False, bones=False, origin="shoulder", hand_z=False):
+              angles=False, traj=False, pos_aug=False, bones=False, origin="shoulder", hand_z=False, folds=False):
     """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다.
     fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용)."""
     index = {w: i for i, w in enumerate(classes)}
@@ -93,7 +93,8 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
         xy, mask = out[0], out[1]
         f = pp.build_features(xy, mask, length, with_hand_rel=with_hand_rel, with_angles=angles, with_traj=traj,
                               with_bones=bones, origin=origin, z=out[2] if hand_z else None,
-                              aspect=c.get("aspect", 16 / 9), with_hand_z=hand_z)
+                              aspect=c.get("aspect", 16 / 9), with_hand_z=hand_z,
+                              with_folds=folds)
         if f is None:
             continue
         X.append(f)
@@ -103,14 +104,15 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
 
 
 def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False, angles=False, traj=False, pos_aug=False,
-                   bones=False, origin="shoulder", hand_z=False):
+                   bones=False, origin="shoulder", hand_z=False, folds=False):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
     rng = np.random.default_rng(seed)
     banks = []
     for _ in range(k):
         X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug,
-                            angles=angles, traj=traj, pos_aug=pos_aug, bones=bones, origin=origin, hand_z=hand_z)
+                            angles=angles, traj=traj, pos_aug=pos_aug, bones=bones, origin=origin, hand_z=hand_z,
+                            folds=folds)
         banks.append(X)
     return np.stack(banks), y
 

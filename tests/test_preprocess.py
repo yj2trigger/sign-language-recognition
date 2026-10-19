@@ -116,6 +116,21 @@ def test_hand_depth_scaled_by_hand_size_with_aspect():
     assert f.shape == (32, 106 + 84 + 42 + 53) and f.dtype == np.float32
 
 
+def test_finger_folds_detect_single_finger():
+    xy, mask = make_clip()
+    xy[:, 11:32] = np.stack([np.linspace(0.5, 0.6, 21), np.full(21, 0.6)], 1)   # 왼손 21점이 일직선(모두 폄), 손목이 어깨 아래 0.5 어깨너비(들어 올림)
+    xy[10:, 11 + 16] = xy[10:, 11 + 13] + (xy[10:, 11 + 16] - xy[10:, 11 + 13]) * 0.5   # 뒤쪽 프레임에서 약지만 절반 길이
+    f = pp.finger_folds(xy, mask, aspect=16 / 9)
+    assert f.shape == (20, 20)
+    assert np.allclose(f[:10, :5], 0) and np.allclose(f[10:, 3], 0.5)       # 약지 접힘 0.5, 앞쪽 프레임은 모두 0
+    assert np.allclose(f[10:, [0, 1, 2, 4]], 0)                              # 다른 손가락은 그대로
+    assert np.allclose(f[10:, 5 + 3], 0.5) and np.allclose(f[10:, 5 + 2], -0.25)   # 이웃 대비: 약지 +0.5, 중지 0-(0+0.5)/2
+    big = xy.copy(); big[:, 11:32] = (xy[:, 11:32] - 0.5) * 2 + 0.3
+    assert np.allclose(pp.finger_folds(big, mask, 16 / 9)[:, :10], f[:, :10])   # 손 크기·위치에 영향받지 않음
+    g = pp.build_features(xy, mask, 32, with_folds=True)
+    assert g.shape == (32, 106 + 84 + 20 + 53) and g.dtype == np.float32
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -151,10 +151,37 @@ def hand_depth(xy, z, mask, aspect):
     return np.concatenate(parts, axis=1)
 
 
+FINGERS = [(1, 4), (5, 8), (9, 12), (13, 16), (17, 20)]          # 엄지·검지·중지·약지·새끼의 (뿌리, 끝)
+FINGER_NEIGHBORS = [[1], [2], [1, 3], [2, 4], [3]]                  # 이웃 손가락(엄지는 검지, 검지는 중지와 비교)
+
+
+def finger_folds(xy, mask, aspect, raise_thr=1.0):
+    """손가락별 접힘: (클립 안 최대 화면 길이 - 현재 길이) / 최대 길이(손가락 뿌리~끝, 화면비 보정) 5개와,
+    그 값에서 이웃 손가락 평균을 뺀 '이웃 대비 접힘' 5개. 손이 통째로 기울면 모든 손가락이 같이 짧아지므로 이웃 대비 값이
+    약지 하나만 접는 차이(팔십 대 구십)를 잡는다(T-031 검증: 다른 수행자에서 80/90 구분력 0.82). 안 보인 손·프레임은 0.
+    정규화 전 원래 좌표(xy, 0~1)를 받는다. 반환 (T, 20)"""
+    norm = normalize(xy, mask)                                      # 손목 높이 판정용(어깨 중점 원점, 어깨너비 1)
+    parts = []
+    for s in HAND_STARTS:
+        h = xy[:, s:s + 21].copy()
+        h[..., 0] *= aspect                                         # 가로를 세로와 같은 단위로
+        ok = mask[:, s]
+        L = np.stack([np.linalg.norm(h[:, t] - h[:, b], axis=-1) for b, t in FINGERS], 1)
+        # 기준(최대 길이)은 손을 들어 올린 프레임에서만 잡는다. 클립 앞뒤의 손 내리는 동작이 기준을 망가뜨려
+        # 클립 전체 최대를 쓰면 80/90 구분력이 0.40까지 떨어졌다(손목이 어깨 중점 아래 1 어깨너비 이내면 0.75).
+        raised = ok & (norm[:, s, 1] < raise_thr) if norm is not None else ok
+        ref = raised if raised.sum() >= 3 else ok
+        mx = L[ref].max(0) if ref.any() else np.ones(5)
+        fold = (mx - L) / np.maximum(mx, 1e-9)
+        rel = fold - np.stack([fold[:, nb].mean(1) for nb in FINGER_NEIGHBORS], 1)
+        parts.append(np.where(ok[:, None], np.concatenate([fold, rel], 1), 0.0))
+    return np.concatenate(parts, axis=1)
+
+
 def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False,
-                   with_bones=False, origin="shoulder", z=None, aspect=16 / 9, with_hand_z=False):
+                   with_bones=False, origin="shoulder", z=None, aspect=16 / 9, with_hand_z=False, with_folds=False):
     """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4]
-    + [손 뼈대 길이 비율 40] + [손 깊이 42] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
+    + [손 뼈대 길이 비율 40] + [손 깊이 42] + [손가락 접힘 20] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
     norm = normalize(xy, mask, origin)
     if norm is None:
         return None
@@ -170,6 +197,8 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=
         parts.append(bone_ratios(filled, mask))
     if with_hand_z:
         parts.append(hand_depth(xy, z, mask, aspect))
+    if with_folds:
+        parts.append(finger_folds(xy, mask, aspect))
     parts.append(mask.astype(np.float32))
     feat = np.concatenate(parts, axis=1)
     return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다
