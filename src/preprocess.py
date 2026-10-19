@@ -83,8 +83,37 @@ def hand_relative(xy, mask):
     return np.concatenate(parts, axis=1)
 
 
-def build_features(xy, mask, length, max_gap=5, with_hand_rel=True):
-    """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + 마스크 53.
+# 손가락 관절 각도를 잴 세 점(가운데 점이 꼭짓점): 손가락마다 3개 x 5 = 15
+FINGER_TRIPLES = [(a, b, c) for f in ((0, 1, 2, 3, 4), (0, 5, 6, 7, 8), (0, 9, 10, 11, 12), (0, 13, 14, 15, 16), (0, 17, 18, 19, 20))
+                  for a, b, c in zip(f, f[1:], f[2:])]
+
+
+def finger_angles(xy, mask):
+    """손가락 관절 15개의 굽은 정도(각도/pi, 곧게 펴면 1). 회전·크기에 영향받지 않는 손 모양 특징. 안 보인 손은 0. 반환 (T, 30)"""
+    parts = []
+    for s in HAND_STARTS:
+        h = xy[:, s:s + 21]
+        a = np.stack([h[:, i] - h[:, j] for i, j, _ in FINGER_TRIPLES], 1)
+        b = np.stack([h[:, k] - h[:, j] for _, j, k in FINGER_TRIPLES], 1)
+        cos = (a * b).sum(-1) / np.maximum(np.linalg.norm(a, axis=-1) * np.linalg.norm(b, axis=-1), 1e-9)
+        ang = np.arccos(np.clip(cos, -1, 1)) / np.pi
+        parts.append(np.where(mask[:, s:s + 1], ang, 0.0))
+    return np.concatenate(parts, axis=1)
+
+
+def wrist_trajectory(xy, mask):
+    """두 손목의 궤적에서 클립 평균 위치를 뺀 값(위치와 무관한 움직임 모양). 안 보인 프레임·손은 0. 반환 (T, 4)"""
+    parts = []
+    for s in HAND_STARTS:
+        ok = mask[:, s]
+        w = xy[:, s]
+        center = w[ok].mean(0) if ok.any() else np.zeros(2)
+        parts.append(np.where(ok[:, None], w - center, 0.0))
+    return np.concatenate(parts, axis=1)
+
+
+def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False):
+    """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4] + 마스크 53.
     어깨가 한 번도 안 보인 클립은 None."""
     norm = normalize(xy, mask)
     if norm is None:
@@ -93,6 +122,10 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True):
     parts = [filled.reshape(len(filled), -1)]
     if with_hand_rel:
         parts.append(hand_relative(filled, mask).reshape(len(filled), -1))
+    if with_angles:
+        parts.append(finger_angles(filled, mask))
+    if with_traj:
+        parts.append(wrist_trajectory(filled, mask))
     parts.append(mask.astype(np.float32))
     feat = np.concatenate(parts, axis=1)
     return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다

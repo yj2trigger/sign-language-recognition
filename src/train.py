@@ -94,11 +94,16 @@ def main():
     ap.add_argument("--fps-aug", action="store_true", help="학습 증강에 20fps 흉내(프레임 건너뛰기)를 섞는다")
     ap.add_argument("--test-ratio", type=float, default=1.0, help="검증·시험 클립의 프레임 간격 배수(1.5 = 20fps 카메라 흉내)")
     ap.add_argument("--no-hand-rel", action="store_true")
+    ap.add_argument("--angles", action="store_true", help="손가락 관절 각도 채널(30)을 더한다")
+    ap.add_argument("--traj", action="store_true", help="평균 위치를 뺀 손목 궤적 채널(4)을 더한다")
+    ap.add_argument("--pos-aug", action="store_true", help="학습 증강에 두 손 위치 이동(어깨너비 ±30%)을 섞는다")
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
-           "fps_aug": a.fps_aug, "test_ratio": a.test_ratio}
+           "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
+           "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug}
+    feat = {"angles": a.angles, "traj": a.traj}
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
@@ -119,9 +124,10 @@ def main():
 
     for fi, fold in enumerate(folds[:a.max_folds] if a.max_folds else folds):
         sel = lambda names: [c for c in clips if c["signer"] in set(fold[names])]
-        va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"])
-        te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"])
-        bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi, fps_aug=cfg["fps_aug"])
+        va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
+        te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
+        bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi,
+                                 fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 path = os.path.join(a.out, "%s-f%d-s%d.json" % (name, fi, seed))

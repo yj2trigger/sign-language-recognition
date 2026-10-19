@@ -68,6 +68,21 @@ def test_augment_does_not_mutate_and_keeps_shapes():
     assert np.array_equal(before, c["xy"]) and xy.shape[1:] == (53, 2) and 8 <= len(xy) <= len(before)
 
 
+def test_pos_aug_moves_hands_only_and_default_unchanged():
+    c = synthetic_clips(1, 1)[0]
+    a1, m1 = ds.augment(c["xy"], c["mask"], np.random.default_rng(5))
+    a2, m2 = ds.augment(c["xy"], c["mask"], np.random.default_rng(5), pos_aug=False)
+    assert np.array_equal(a1, a2) and np.array_equal(m1, m2)       # 기본값이면 기존 증강과 완전히 같다(기존 실험 재현성)
+    xy = c["xy"]
+    for seed in range(20):
+        out = ds.shift_hands(xy, c["mask"], np.random.default_rng(seed))
+        d = out - xy
+        assert np.allclose(d[:, :9], 0)                              # 머리·어깨·팔꿈치는 그대로
+        assert np.allclose(d[:, ds.HAND_PTS], d[0, 9], atol=1e-6)    # 손 쪽 점은 모두 같은 양만큼 이동(float32 반올림 허용)
+        assert (np.abs(d[0, 9]) <= 0.3 * 0.2 + 1e-6).all()           # 이동량은 어깨너비(0.2)의 ±30% 안
+    assert np.array_equal(xy, c["xy"])                                # 입력은 바뀌지 않음
+
+
 def test_subsample_emulates_lower_fps():
     c = synthetic_clips(1, 1, T=90)[0]
     xy, mask = ds.subsample(c["xy"], c["mask"], 1.5)

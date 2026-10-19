@@ -53,6 +53,29 @@ def test_features_shape_and_finite():
     assert pp.build_features(xy, mask, 32, with_hand_rel=False).shape == (32, 106 + 53)
 
 
+def test_finger_angles_straight_and_invariant():
+    xy, mask = make_clip()
+    xy[:, 11:32] = np.stack([np.linspace(0.5, 0.6, 21), np.full(21, 0.7)], 1)   # 왼손 21점이 일직선 = 모든 손가락이 곧게 펴짐
+    a = pp.finger_angles(xy, mask)
+    assert a.shape == (20, 30)
+    assert np.allclose(a[:, :15], 1.0, atol=1e-5)                    # 곧게 펴면 각도/pi = 1
+    big = xy.copy()
+    big[:, 11:32] = (xy[:, 11:32] - 0.5) * 2 + 0.3                   # 손을 2배로 키우고 옮겨도
+    assert np.allclose(pp.finger_angles(big, mask)[:, :15], a[:, :15], atol=1e-5)   # 각도는 같다
+    mask[:, 32:53] = False
+    assert (pp.finger_angles(xy, mask)[:, 15:] == 0).all()           # 안 보인 손은 0
+
+
+def test_trajectory_removes_position():
+    xy, mask = make_clip()
+    xy[:, 11, 0] = np.linspace(0.4, 0.6, 20)                          # 왼손목이 오른쪽으로 이동
+    moved = xy.copy()
+    moved[:, 11] += 0.2                                               # 같은 움직임을 다른 위치에서
+    assert np.allclose(pp.wrist_trajectory(xy, mask), pp.wrist_trajectory(moved, mask), atol=1e-6)
+    f = pp.build_features(xy, mask, 32, with_angles=True, with_traj=True)
+    assert f.shape == (32, 106 + 84 + 30 + 4 + 53) and f.dtype == np.float32
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

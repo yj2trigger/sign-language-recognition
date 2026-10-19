@@ -29,15 +29,32 @@ def subsample(xy, mask, ratio):
     return xy[idx], mask[idx]
 
 
-def augment(xy, mask, rng, fps_aug=False):
+HAND_PTS = [9, 10] + list(range(11, 53))   # 몸 쪽 손목 2점 + 양손 42점(손 위치 이동 증강 대상)
+
+
+def shift_hands(xy, mask, rng, frac=0.3):
+    """두 손(몸 쪽 손목 포함)을 몸에 대해 같은 양만큼 옮긴다. 이동량은 어깨너비의 ±frac 안에서 상하·좌우 무작위. 새 배열을 돌려준다."""
+    out = xy.copy()
+    ok = mask[:, pp.L_SH] & mask[:, pp.R_SH]
+    if ok.any():
+        width = np.median(np.linalg.norm(xy[ok, pp.L_SH] - xy[ok, pp.R_SH], axis=-1))
+        out[:, HAND_PTS] += (rng.uniform(-frac, frac, 2) * width).astype(np.float32)
+    return out
+
+
+def augment(xy, mask, rng, fps_aug=False, pos_aug=False):
     """시간 속도 변화(구간 일부만 쓰기), 좌표 잡음, 작은 회전, 프레임 결측. 입력은 건드리지 않고 새 배열을 돌려준다.
-    fps_aug 이면 절반쯤은 먼저 20fps 로 낮춘다(30fps 로 학습한 모델이 낮은 fps 입력에 견디게)."""
+    fps_aug 이면 절반쯤은 먼저 20fps 로 낮춘다(30fps 로 학습한 모델이 낮은 fps 입력에 견디게).
+    pos_aug 이면 두 손 전체를 몸에 대해 같은 양만큼 상하·좌우로 옮긴다(어깨너비의 ±30%, 개인별 손 높이 차이 흉내).
+    기본값(False)일 때는 난수를 더 쓰지 않으므로 기존 실험의 증강본이 바뀌지 않는다."""
     if fps_aug and rng.random() < 0.5:
         xy, mask = subsample(xy, mask, 1.5)
     n = len(xy)
     keep = max(8, int(round(n * rng.uniform(0.8, 1.0))))      # 구간을 줄여 쓰면 리샘플 뒤 속도가 빨라진다
     s = rng.integers(0, n - keep + 1)
     xy, mask = xy[s:s + keep].copy(), mask[s:s + keep].copy()
+    if pos_aug:
+        xy = shift_hands(xy, mask, rng)
     xy += rng.normal(0, 0.005, xy.shape).astype(np.float32)   # 이미지 폭의 0.5% 수준
     a = np.deg2rad(rng.uniform(-8, 8))
     c = xy.reshape(-1, 2).mean(0)
@@ -48,19 +65,20 @@ def augment(xy, mask, rng, fps_aug=False):
     return xy, mask
 
 
-def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.0, fps_aug=False):
+def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.0, fps_aug=False,
+              angles=False, traj=False, pos_aug=False):
     """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다.
     fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용)."""
     index = {w: i for i, w in enumerate(classes)}
     X, y, sg = [], [], []
     for c in clips:
         if rng is not None:
-            xy, mask = augment(c["xy"], c["mask"], rng, fps_aug)
+            xy, mask = augment(c["xy"], c["mask"], rng, fps_aug, pos_aug)
         elif fps_ratio != 1.0:
             xy, mask = subsample(c["xy"], c["mask"], fps_ratio)
         else:
             xy, mask = c["xy"], c["mask"]
-        f = pp.build_features(xy, mask, length, with_hand_rel=with_hand_rel)
+        f = pp.build_features(xy, mask, length, with_hand_rel=with_hand_rel, with_angles=angles, with_traj=traj)
         if f is None:
             continue
         X.append(f)
@@ -69,13 +87,14 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
     return np.stack(X), np.array(y, dtype=np.int64), np.array(sg)     # Windows 의 numpy 기본 정수는 int32 라 torch 손실 함수가 거부한다
 
 
-def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False):
+def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False, angles=False, traj=False, pos_aug=False):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
     rng = np.random.default_rng(seed)
     banks = []
     for _ in range(k):
-        X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug)
+        X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug,
+                            angles=angles, traj=traj, pos_aug=pos_aug)
         banks.append(X)
     return np.stack(banks), y
 
