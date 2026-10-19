@@ -21,6 +21,28 @@ import dataset as ds
 import models
 
 
+def no_power_throttling():
+    """Windows 11 은 사용자가 자리를 비우면 창 없는 백그라운드 프로세스를 효율 모드(EcoQoS: 저전력 코어·낮은 클럭)로 돌린다.
+    이 프로세스만 그 대상에서 빼 달라고 요청한다(시스템 설정은 바꾸지 않고 프로세스가 끝나면 사라짐). 다른 OS 에서는 아무것도 안 한다.
+    2026-10-19 사용자 부재 중 학습 1회가 평소의 5~7배로 느려진 일 때문에 넣었다(T-023)."""
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    class _State(ctypes.Structure):
+        _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+
+    s = _State(1, 0x1, 0x0)          # PROCESS_POWER_THROTTLING_EXECUTION_SPEED 를 제어하되 끈 상태로
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.GetCurrentProcess.restype = ctypes.c_void_p          # 64비트 핸들이 잘리지 않게 타입을 명시
+    k.SetProcessInformation.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+    k.SetProcessInformation.restype = ctypes.c_int
+    ok = bool(k.SetProcessInformation(k.GetCurrentProcess(), 4, ctypes.byref(s), ctypes.sizeof(s)))   # 4 = ProcessPowerThrottling
+    if not ok:
+        print("효율 모드 제외 요청 실패, 오류 코드", ctypes.get_last_error(), flush=True)
+    return ok
+
+
 def git_state():
     try:
         h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
@@ -99,6 +121,7 @@ def main():
     ap.add_argument("--pos-aug", action="store_true", help="학습 증강에 두 손 위치 이동(어깨너비 ±30%)을 섞는다")
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
+    print("효율 모드 제외 요청:", "성공" if no_power_throttling() else "적용 안 됨", flush=True)
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
            "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
