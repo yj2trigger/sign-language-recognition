@@ -124,6 +124,10 @@ def main():
         bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi, fps_aug=cfg["fps_aug"])
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
+                path = os.path.join(a.out, "%s-f%d-s%d.json" % (name, fi, seed))
+                if os.path.exists(path):              # 재시작 뒤 다시 실행하면 끝난 실행은 건너뛴다
+                    print("건너뜀(이미 있음):", path, flush=True)
+                    continue
                 t = time.time()
                 model, best, hist = train_one(name, bank, va[:2], classes, cfg, seed)
                 logits = predict(model, te[0])
@@ -134,9 +138,11 @@ def main():
                        "epochs_run": len(hist), "train_sec": round(time.time() - t, 1), "val_curve": hist,
                        "split": fold, "split_sha": split_hash, "classes_sha": class_hash,
                        "n_classes": len(classes), "config": cfg, "git": git}
-                path = os.path.join(a.out, "%s-%s-f%d-s%d.json" % (time.strftime("%Y%m%d"), name, fi, seed))
-                with open(path, "w", encoding="utf-8") as f:
+                res["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                part = path + ".tmp"                      # 쓰는 도중 끊겨도 불완전한 json 이 남지 않게
+                with open(part, "w", encoding="utf-8") as f:
                     json.dump(res, f, ensure_ascii=False)
+                os.replace(part, path)
                 print("%s fold%d seed%d: val F1 %.3f | test acc %.3f F1 %.3f | %d에폭 %.0f초 -> %s" % (
                     name, fi, seed, best, res["test"]["acc"], res["test"]["macro_f1"], len(hist), res["train_sec"], path), flush=True)
 
