@@ -43,6 +43,16 @@ def no_power_throttling():
     return ok
 
 
+def keep_awake():
+    """학습이 도는 동안 시스템이 절전(모던 스탠바이)으로 들어가지 않게 요청한다(ES_CONTINUOUS | ES_SYSTEM_REQUIRED).
+    동영상 재생 프로그램이 쓰는 것과 같은 방식이며 시스템 설정은 바꾸지 않고 프로세스가 끝나면 풀린다. 덮개를 닫는 것은 막지 못한다.
+    2026-10-20 00:44 절전 진입 중 비정상 재부팅으로 실험이 끊긴 일 때문에 넣었다(T-026)."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    return bool(ctypes.windll.kernel32.SetThreadExecutionState(ctypes.c_uint(0x80000000 | 0x00000001)))
+
+
 def git_state():
     try:
         h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
@@ -124,6 +134,7 @@ def main():
     ap.add_argument("--out", default="runs")
     a = ap.parse_args()
     print("효율 모드 제외 요청:", "성공" if no_power_throttling() else "적용 안 됨", flush=True)
+    print("절전 방지 요청:", "성공" if keep_awake() else "적용 안 됨", flush=True)
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
            "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
@@ -148,6 +159,11 @@ def main():
     git = git_state()
 
     for fi, fold in enumerate(folds[:a.max_folds] if a.max_folds else folds):
+        todo = [(n, s) for n in a.models.split(",") for s in a.seeds.split(",")
+                if not os.path.exists(os.path.join(a.out, "%s-f%d-s%s.json" % (n, fi, s)))]
+        if not todo:                                  # 재시작 시 다 끝난 폴드는 데이터 준비(증강본 생성)도 건너뛴다
+            print("폴드 %d 건너뜀(모두 끝남)" % fi, flush=True)
+            continue
         sel = lambda names: [c for c in clips if c["signer"] in set(fold[names])]
         va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
         te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
