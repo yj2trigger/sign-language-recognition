@@ -50,7 +50,7 @@ def train_one(name, bank, va, classes, cfg, seed):
     Xb, y = bank
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
-    n_feat = va[0].shape[2]
+    n_feat = Xb.shape[3]
     model = models.build(name, n_feat, len(classes))
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["wd"])
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg["epochs"])
@@ -68,6 +68,10 @@ def train_one(name, bank, va, classes, cfg, seed):
             loss_fn(model(torch.from_numpy(X[b])), torch.from_numpy(y[b])).backward()
             opt.step()
         sched.step()
+        if va is None:                                    # 최종 모델: 검증 수행자 없이 정한 에폭까지 학습
+            if epoch + 1 >= cfg["final_epochs"]:
+                break
+            continue
         f1 = metrics(predict(model, va[0]), va[1])["macro_f1"]
         hist.append(round(f1, 4))
         if f1 > best:
@@ -76,7 +80,8 @@ def train_one(name, bank, va, classes, cfg, seed):
             bad += 1
             if bad >= cfg["patience"]:
                 break
-    model.load_state_dict(best_state)
+    if best_state is not None:
+        model.load_state_dict(best_state)
     return model, best, hist
 
 
@@ -104,13 +109,16 @@ def main():
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
+    ap.add_argument("--final", type=int, default=0,
+                    help="N>0 이면 분할 없이 모든 수행자로 N 에폭 학습한 최종 모델만 저장한다(N 은 교차 검증의 최고 검증 에폭으로 정함)")
     a = ap.parse_args()
     print("효율 모드 제외 요청:", "성공" if no_power_throttling() else "적용 안 됨", flush=True)
     print("절전 방지 요청:", "성공" if keep_awake() else "적용 안 됨", flush=True)
     cfg = {"lr": 2e-3, "wd": 1e-2, "batch": 64, "epochs": a.epochs, "patience": a.patience,
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
            "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
-           "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
+           "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold,
+           "final_epochs": a.final}
     feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
 
     with open(a.classes, encoding="utf-8") as f:
@@ -124,6 +132,23 @@ def main():
     print("클립 %d개, 사용 수행자 %d명 %s, 클래스 %d개" % (len(clips), len(signers), signers, len(classes)), flush=True)
     if len(signers) < 3 * 2:
         raise SystemExit("수행자 독립 분할에는 최소 6명(학습·검증·시험 각 2명 이상)이 필요하다")
+    if a.final:
+        if not a.save_models:
+            raise SystemExit("--final 은 --save-models 와 함께 써야 한다")
+        git = git_state()
+        os.makedirs(a.save_models, exist_ok=True)
+        bank = ds.augmented_bank([c for c in clips if c["signer"] in set(signers)], classes, cfg["length"], cfg["hand_rel"],
+                                 cfg["bank"], seed=0, fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+        for name in a.models.split(","):
+            for seed in (int(s) for s in a.seeds.split(",")):
+                t = time.time()
+                model, _, _ = train_one(name, bank, None, classes, cfg, seed)
+                pt = os.path.join(a.save_models, "final-%s-c%d-s%d.pt" % (name, len(classes), seed))
+                torch.save({"state": model.state_dict(), "model": name, "n_feat": int(bank[0].shape[3]), "classes": classes,
+                            "config": cfg, "split": {"train": signers, "val": [], "test": []}, "git": git}, pt + ".tmp")
+                os.replace(pt + ".tmp", pt)
+                print("최종 %s seed%d: 수행자 %d명, %d에폭 %.0f초 -> %s" % (name, seed, len(signers), a.final, time.time() - t, pt), flush=True)
+        return
     n_folds = min(a.folds, len(signers) // 2)
     folds = ds.make_folds(signers, n_folds)
     split_hash, class_hash = ds.sha(folds), ds.sha(classes)
