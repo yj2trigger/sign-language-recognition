@@ -36,14 +36,52 @@ def _frame(res):
     return xy, mask, z
 
 
-def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=False):
+TARGET_ASPECT = 16 / 9   # 학습 데이터(1920x1080)의 화면비
+
+
+def fit_16x9(bgr):
+    """프레임을 16:9 틀 가운데에 넣고 남는 곳을 검은색으로 채운다. 이미 16:9면 그대로 돌려준다.
+    MediaPipe 좌표는 x 를 화면 너비, y 를 화면 높이로 나눈 값이라 화면비가 다르면 손 모양이 다르게 찌그러진다(C-16).
+    세로 핸드폰(9:16)·4:3 웹캠 등 어떤 비율이 들어와도 학습 데이터와 같은 좌표 단위가 되게 한다."""
+    h, w = bgr.shape[:2]
+    if abs(w / h - TARGET_ASPECT) < 1e-3:
+        return bgr
+    if w / h < TARGET_ASPECT:                      # 세로로 긴 화면: 좌우에 여백
+        new_w = int(round(h * TARGET_ASPECT))
+        pad = new_w - w
+        return cv2.copyMakeBorder(bgr, 0, 0, pad // 2, pad - pad // 2, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    new_h = int(round(w / TARGET_ASPECT))          # 가로로 더 긴 화면: 위아래에 여백
+    pad = new_h - h
+    return cv2.copyMakeBorder(bgr, pad // 2, pad - pad // 2, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+
+
+def center_crop(bgr, aspect):
+    """가운데를 aspect(너비/높이) 비율로 잘라낸다. 다른 카메라 화면비를 흉내 내는 검증용이다(예: 9/16 = 핸드폰 세로)."""
+    h, w = bgr.shape[:2]
+    if w / h > aspect:
+        nw = int(round(h * aspect)); x0 = (w - nw) // 2
+        return bgr[:, x0:x0 + nw]
+    nh = int(round(w / aspect)); y0 = (h - nh) // 2
+    return bgr[y0:y0 + nh]
+
+
+def process_frame(holistic, bgr):
+    """MediaPipe 에 넣는 단일 경로: 16:9 틀에 넣고 → RGB 로 바꿔 → 추출. 학습 데이터 추출과 실시간·영상 파일 입력이 모두 이 함수를 쓴다.
+    반환: (xy, mask, z, 처리한 프레임의 (너비, 높이))"""
+    fitted = fit_16x9(bgr)
+    xy, mask, z = _frame(holistic.process(cv2.cvtColor(fitted, cv2.COLOR_BGR2RGB)))
+    return xy, mask, z, (fitted.shape[1], fitted.shape[0])
+
+
+def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=False, crop_aspect=None):
     """[start_s - margin_s, end_s + margin_s] 구간의 프레임에서 좌표를 뽑는다.
-    반환: (xy (T,53,2), mask (T,53), fps). with_z 이면 (xy, mask, fps, z (T,53), (화면 너비, 높이)). 읽은 프레임이 없으면 None.
+    반환: (xy (T,53,2), mask (T,53), fps). with_z 이면 (xy, mask, fps, z (T,53), (처리한 화면 너비, 높이)). 읽은 프레임이 없으면 None.
+    crop_aspect 를 주면 프레임을 그 비율로 가운데 잘라낸 뒤 처리한다(다른 카메라 흉내, 검증용).
     클립마다 새 Holistic 을 만들어 앞 클립의 추적 상태가 섞이지 않게 한다."""
     cap = cv2.VideoCapture(str(video_path).replace("\\", "/"))
+    wh = None
     try:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        wh = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         t0 = max(0.0, start_s - margin_s)
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(t0 * fps)))
         n = int(round((end_s + margin_s - t0) * fps)) + 1
@@ -53,7 +91,9 @@ def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=
                 ok, bgr = cap.read()
                 if not ok:
                     break
-                xy, mask, z = _frame(holistic.process(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)))
+                if crop_aspect:
+                    bgr = center_crop(bgr, crop_aspect)
+                xy, mask, z, wh = process_frame(holistic, bgr)
                 xys.append(xy)
                 masks.append(mask)
                 zs.append(z)
