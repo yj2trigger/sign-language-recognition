@@ -103,6 +103,7 @@ def main():
     ap.add_argument("--hand-z", action="store_true", help="손가락 깊이 채널(42, MediaPipe 손 z)을 더한다. features-z 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--out", default="runs")
+    ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
     a = ap.parse_args()
     print("효율 모드 제외 요청:", "성공" if no_power_throttling() else "적용 안 됨", flush=True)
     print("절전 방지 요청:", "성공" if keep_awake() else "적용 안 됨", flush=True)
@@ -161,6 +162,12 @@ def main():
                 with open(part, "w", encoding="utf-8") as f:
                     json.dump(res, f, ensure_ascii=False)
                 os.replace(part, path)
+                if a.save_models:                         # eval_saved.py 가 이 파일 하나로 같은 전처리·모델을 복원한다
+                    os.makedirs(a.save_models, exist_ok=True)
+                    pt = os.path.join(a.save_models, "%s-f%d-s%d.pt" % (name, fi, seed))
+                    torch.save({"state": model.state_dict(), "model": name, "n_feat": int(te[0].shape[2]),
+                                "classes": classes, "config": cfg, "split": fold, "git": git}, pt + ".tmp")
+                    os.replace(pt + ".tmp", pt)
                 print("%s fold%d seed%d: val F1 %.3f | test acc %.3f F1 %.3f | %d에폭 %.0f초 -> %s" % (
                     name, fi, seed, best, res["test"]["acc"], res["test"]["macro_f1"], len(hist), res["train_sec"], path), flush=True)
 
