@@ -107,6 +107,7 @@ def main():
     ap.add_argument("--finger-fold", action="store_true", help="손가락별 접힘과 이웃 대비 접힘 채널(20)을 더한다(T-031)")
     ap.add_argument("--hand-z", action="store_true", help="손가락 깊이 채널(42, MediaPipe 손 z)을 더한다. features-z 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
+    ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
     ap.add_argument("--final", type=int, default=0,
@@ -118,7 +119,7 @@ def main():
            "length": a.length, "hand_rel": not a.no_hand_rel, "bank": a.bank,
            "fps_aug": a.fps_aug, "test_ratio": a.test_ratio,
            "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold,
-           "final_epochs": a.final}
+           "final_epochs": a.final, "aug": not a.no_aug}
     feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
 
     with open(a.classes, encoding="utf-8") as f:
@@ -164,8 +165,12 @@ def main():
         sel = lambda names: [c for c in clips if c["signer"] in set(fold[names])]
         va = ds.to_arrays(sel("val"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
         te = ds.to_arrays(sel("test"), classes, cfg["length"], cfg["hand_rel"], fps_ratio=cfg["test_ratio"], **feat)
-        bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi,
-                                 fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+        if a.no_aug:                                  # 증강본 대신 원래 클립 한 벌(에폭마다 같은 입력)
+            X, y, _ = ds.to_arrays(sel("train"), classes, cfg["length"], cfg["hand_rel"], **feat)
+            bank = (X[None], y)
+        else:
+            bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi,
+                                     fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 path = os.path.join(a.out, "%s-f%d-s%d.json" % (name, fi, seed))
