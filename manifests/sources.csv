@@ -1,0 +1,20 @@
+aihub_key,root,path,contents,bytes,sha256_first_1mb
+사용자 사전 다운로드,pre,수어영상/수어 영상/1.Training/[라벨]01_real_word_morpheme.zip,"Training 단어 형태소 라벨(구간·이름), 전체 수행자",115352496,fd28666551de5faf22895aeca914e2e98b7a949fb1807f1f45e041acc3a3d623
+39546,data,downloads/train-word-video-01/004.수어영상/1.Training/원천데이터/REAL/WORD/01_real_word_video.zip,"Training 단어 영상, 수행자 1, 단어 1501~3000, 5시점",32547266828,c864ab0e517b077921deb53a0a82ae2c8a6b4c376c31d87a5ecf4fc7cb5e393d
+39548,data,downloads/train-word-video-02/004.수어영상/1.Training/원천데이터/REAL/WORD/03_real_word_video.zip,"Training 단어 영상, 수행자 2, 단어 1501~3000, 5시점",31285910960,ba96b325bb7db96e035a0342114f78dc74c7624f5f8780015668613fba20177c
+39550,data,downloads/train-word-video-03/004.수어영상/1.Training/원천데이터/REAL/WORD/05_real_word_video.zip,"Training 단어 영상, 수행자 3, 단어 1501~3000, 5시점",31397870007,6be304772d578aea78260832b05ade9e6bf981c33f9e944317d0d382fd8e57db
+39552,data,downloads/train-word-video-04/004.수어영상/1.Training/원천데이터/REAL/WORD/07_real_word_video.zip,"Training 단어 영상, 수행자 4, 단어 1501~3000, 5시점",38424318395,a397006e4a8643c4978d33907f6cf8df47c93128e05f1ecb2d55de11c8351f2f
+39554,data,downloads/train-word-video-05/004.수어영상/1.Training/원천데이터/REAL/WORD/09_real_word_video.zip,"Training 단어 영상, 수행자 5, 단어 1501~3000, 5시점",30712484548,6743e1fb62d1d1317baae536c6f7466fc1bfc601e48a962d926b6d4efb96557a
+39556,data,downloads/train-word-video-06/004.수어영상/1.Training/원천데이터/REAL/WORD/11_real_word_video.zip,"Training 단어 영상, 수행자 6, 단어 1501~3000, 5시점",32543140317,41ab01b9253e72d01dfc808d54c124a8834246fb02059cbc56679edf6e35b771
+39558,data,downloads/train-word-video-07/004.수어영상/1.Training/원천데이터/REAL/WORD/13_real_word_video.zip,"Training 단어 영상, 수행자 7, 단어 1501~3000, 5시점",29571621604,8ca0db7060eb9b7c975560dc8d3a21c22d5fecbac2bd44548d502e069eed01be
+39560,data,downloads/train-word-video-08/004.수어영상/1.Training/원천데이터/REAL/WORD/15_real_word_video.zip,"Training 단어 영상, 수행자 8, 단어 1501~3000, 5시점",32576825451,c0405e625eb4efc30723cc896b865325a9bb10259e9c54a707842a831c91facc
+39562,data,downloads/train-word-video-09/004.수어영상/1.Training/원천데이터/REAL/WORD/17_real_word_video.zip,"Training 단어 영상, 수행자 9, 단어 1501~3000, 5시점",33766315643,cb347341a86adb95ddde6b0d54407578cf9f877c7836744f30115ecac9121209
+39564,data,downloads/train-word-video-10/004.수어영상/1.Training/원천데이터/REAL/WORD/19_real_word_video.zip,"Training 단어 영상, 수행자 10, 단어 1501~3000, 5시점",35521819228,88303302295dab832e6526af9fbf9390f5109a5d4658e3fa432a5cffa509f63a
+39566,data,downloads/train-word-video-11/004.수어영상/1.Training/원천데이터/REAL/WORD/21_real_word_video.zip,"Training 단어 영상, 수행자 11, 단어 1501~3000, 5시점",32297013403,cc361bd36dad7b23351947a17d06c005605f866b6a958668aa91d64dd4cf05c6
+39568,data,downloads/train-word-video-12/004.수어영상/1.Training/원천데이터/REAL/WORD/23_real_word_video.zip,"Training 단어 영상, 수행자 12, 단어 1501~3000, 5시점",31076260124,c826e7a6226d12080f47e7db7200aed163509dcccf7b74d28b0e1d65f3edb08a
+39570,data,downloads/train-word-video-13/004.수어영상/1.Training/원천데이터/REAL/WORD/25_real_word_video.zip,"Training 단어 영상, 수행자 13, 단어 1501~3000, 5시점",32409816125,7edc771ffe1c24f6cf15f668f92ff5b13417c60831a7b9bc325ddd71a7588a3b
+39572,data,downloads/train-word-video-14/004.수어영상/1.Training/원천데이터/REAL/WORD/27_real_word_video.zip,"Training 단어 영상, 수행자 14, 단어 1501~3000, 5시점",33662639232,83cb5e604bb7d23c6b71881d72c52e26c3f25ea6c3b7ca0154cb8f012bf65102
+39574,data,downloads/train-word-video-15/004.수어영상/1.Training/원천데이터/REAL/WORD/29_real_word_video.zip,"Training 단어 영상, 수행자 15, 단어 1501~3000, 5시점",32945187600,ea787c1207f5247ea045dbfeb51dcd5c4ee34d39f9f4656085b8d0e69832dc79
+39576,data,downloads/train-word-video-16/004.수어영상/1.Training/원천데이터/REAL/WORD/31_real_word_video.zip,"Training 단어 영상, 수행자 16, 단어 1501~3000, 5시점",31478580414,4469bc26a97f81751be87937eb9cc85a1f75fddbb640b27f7679b9a6a987b89d
+39483,data,downloads/val-word-video/004.수어영상/2.Validation/원천데이터/REAL/01_real_word_video.zip,"Validation 단어 영상, 수행자 17·18, 전체 단어",126475499496,b7ca71128e69bd43dcc903acce94cd8eb323ec96ea7ce0c77e91d7386d6454a8
+39478,data,downloads/test-39478/004.수어영상/2.Validation/라벨링데이터/REAL/WORD/01_real_word_morpheme.zip,Validation 단어 형태소 라벨,14434263,60457831f1ce03f127624f24d478049967b25e3fe4de23c3057480782daa1640

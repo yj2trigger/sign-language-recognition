@@ -1,0 +1,4 @@
+path,bytes,sha256,git,model,n_classes,train_signers
+models/final/final-tcn-c300-s0.pt,920521,12af675182a8371483a0e833fb0380439f7e515efc5e6d5a56e041938c8e53f9,0433040,tcn,300,1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18
+models/t035/tcn-f0-s0.pt,790585,1260153bada1b48e5b06c9d25641039f8d99e92674dc2de1f8a11c184fa7d7d6,d30ba07,tcn,100,2 6 7 8 9 10 12 14 15 16 17 18
+models/holistic_landmarker.task,13683609,e2dab61191e2dcd0a15f943d8e3ed1dce13c82dfa597b9dd39f562975a50c3f8,,,,
