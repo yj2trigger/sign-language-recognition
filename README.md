@@ -37,6 +37,10 @@ py -3.12 -m venv .venv
 
 This research used datasets from The Open AI Dataset Project (AI-Hub, S. Korea). All data information can be accessed through 'AI-Hub (www.aihub.or.kr)'.
 
+## 라이선스
+
+코드는 MIT 라이선스(`LICENSE`)를 따른다. AI-Hub 데이터는 이 라이선스에 포함되지 않으며 AI-Hub 이용 조건을 따른다.
+
 ## 기록
 
 일지·시행착오·제약 표·그림 목록은 task-management-repository의 `logs/sign-language/`에 있다.
