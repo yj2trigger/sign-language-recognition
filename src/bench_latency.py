@@ -12,6 +12,7 @@ import torch
 
 import models
 import preprocess as pp
+from winpower import keep_awake, no_power_throttling
 
 
 def stats(ms):
@@ -59,6 +60,8 @@ def features_ms(reps=200):
 
 
 def main():
+    # 창 없는 백그라운드 실행은 Windows 효율 모드로 느려져 지연이 1.5배까지 부풀었다(T-039, C-15). 측정 전에 빼 달라고 요청한다.
+    print("효율 모드 제외 %s, 절전 방지 %s" % (no_power_throttling(), keep_awake()))
     video = sys.argv[1].replace("\\", "/")
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 160
     cap = cv2.VideoCapture(video)
