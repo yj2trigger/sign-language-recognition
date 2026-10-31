@@ -4,6 +4,25 @@
 
 MediaPipe Holistic으로 상체 11점과 양손 42점(총 53점)을 추출하고, LSTM/GRU와 1D-CNN(TCN)으로 단어를 인식한다.
 
+## 결과
+
+수행자 18명을 6폴드로 나눠, 학습에 없던 사람으로 시험했다.
+
+| 조건 | 정확도 | macro-F1 |
+|---|---|---|
+| 단어 300개, TCN, 시드 4개 | 0.980 | 0.979 |
+
+| 모델 비교(단어 100개, 시드 3개) | macro-F1 |
+|---|---|
+| TCN | 0.988 |
+| GRU | 0.975 |
+| MLP | 0.755 |
+
+![모델 비교](figures/W3-01-model-comparison.png)
+![어휘 크기별 성능](figures/W3-02-vocab-curve.png)
+
+어휘 크기 그래프는 시드 2개 기준이라 위 표의 시드 4개 값과 조금 다르다. 같은 스튜디오에서 촬영한 데이터 기준이며, 웹캠과 외부 영상 성능은 아직 측정하지 않았다. 실험 원본 결과는 `runs/`에 있다.
+
 ## 환경
 
 Python 3.12, CPU 전용. 가상환경은 레포 안 `.venv`(git 제외).
@@ -40,7 +59,3 @@ This research used datasets from The Open AI Dataset Project (AI-Hub, S. Korea).
 ## 라이선스
 
 코드는 MIT 라이선스(`LICENSE`)를 따른다. AI-Hub 데이터는 이 라이선스에 포함되지 않으며 AI-Hub 이용 조건을 따른다.
-
-## 기록
-
-일지·시행착오·제약 표·그림 목록은 task-management-repository의 `logs/sign-language/`에 있다.
