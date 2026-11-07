@@ -9,7 +9,7 @@
   2. 수행자마다 이름 표기가 다르지 않다(번호 하나에 이름 하나).
   3. 그 이름이 다른 단어 번호에 쓰이지 않는다(이름이 같은 서로 다른 수어가 섞이지 않게).
 후보 조건 v2: 클래스는 단어 번호이고 이름은 표시에만 쓰므로, 표기 흔들림과 이름 공유로 단어를 버리지 않는다.
-  1. v1 의 1과 같다.
+  1. 수행자 18명 중 17명 이상에게 라벨이 있다(한 명이 빠진 단어 8개를 쓰기로 함, 2026-11-08).
   2. 앞뒤 공백을 지운 표기의 다수결 이름(대표 이름)이 그 번호 라벨의 절반을 넘는다.
   소수 표기는 normalize() 가 같은 단어로 볼지 정하고, 그러지 못한 클립은 확인 대상(--review)으로 남긴다.
   확인 대상은 좌표 추출 뒤 tools/check_mislabels.py 가 남길지 뺄지 판정한다.
@@ -25,6 +25,7 @@ import zipfile
 
 NAME = re.compile(r"WORD(\d+)_REAL(\d+)_F_morpheme\.json$")
 FULL_SIGNERS = set(range(1, 19))   # 전 단어를 수행한 수행자 번호(Training 1~16, Validation 17~18)
+MIN_SIGNERS_V2 = 17                 # v2 후보에 필요한 최소 수행자 수
 
 
 def read_labels(zip_path):
@@ -88,7 +89,7 @@ def candidates_v2(rows, lo, hi):
     per_word = collections.defaultdict(list)
     for w, s, g in rows:
         per_word[w].append((s, g.strip()))
-    pool = sorted(w for w, items in per_word.items() if lo <= w <= hi and FULL_SIGNERS <= {s for s, _ in items}
+    pool = sorted(w for w, items in per_word.items() if lo <= w <= hi and len(FULL_SIGNERS & {s for s, _ in items}) >= MIN_SIGNERS_V2
                   and 2 * sum(g == major[w] for _, g in items) > len(items))
     by_name = collections.defaultdict(list)
     for w, m in major.items():
