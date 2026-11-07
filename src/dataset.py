@@ -9,9 +9,22 @@ import numpy as np
 import preprocess as pp
 
 
+SEG_MARGIN = 0.5   # 라벨 구간 앞뒤 여유(초). 예전 구간 추출(landmarks.extract_clip)과 같은 값
+
+
+def segment(z, margin=SEG_MARGIN):
+    """영상 전체 npz(full)에서 라벨 구간 ±margin 의 프레임 번호 범위. 예전 npz 면 전체."""
+    if "full" not in z.files:
+        return slice(None)
+    t = z["t"]
+    return slice(int(np.searchsorted(t, float(z["seg_start"]) - margin)),
+                 int(np.searchsorted(t, float(z["seg_end"]) + margin, side="right")))
+
+
 def load_clips(feature_dirs, word_ids, exclude=()):
     """npz 클립 중 선정한 단어 번호의 것만 읽는다. 각 클립은 {xy, mask, word, signer} 딕셔너리.
-    exclude: 뺄 (단어 번호, 수행자) 쌍(tools/check_mislabels.py 가 영상이 다른 단어로 판정한 클립)."""
+    exclude: 뺄 (단어 번호, 수행자) 쌍(tools/check_mislabels.py 가 영상이 다른 단어로 판정한 클립).
+    영상 전체 npz 는 라벨 구간 ±0.5초로 잘라 예전 클립과 같은 모양으로 만든다(얼굴 점이 있으면 face, face_mask 도 담는다)."""
     keep, exclude = set(word_ids), {tuple(p) for p in exclude}
     clips = []
     for d in feature_dirs:
@@ -20,9 +33,12 @@ def load_clips(feature_dirs, word_ids, exclude=()):
                 continue
             z = np.load(f)
             if int(z["word_id"]) in keep and (int(z["word_id"]), int(z["signer"])) not in exclude:
+                s = segment(z)
                 wh = z["wh"] if "wh" in z.files else (1920, 1080)       # 예전 추출(z 없음)은 모두 1920x1080
-                clips.append({"xy": z["xy"], "mask": z["mask"], "word": int(z["word_id"]), "signer": int(z["signer"]),
-                              "z": z["z"] if "z" in z.files else None, "aspect": float(wh[0]) / float(wh[1])})
+                clips.append({"xy": z["xy"][s], "mask": z["mask"][s], "word": int(z["word_id"]), "signer": int(z["signer"]),
+                              "z": z["z"][s] if "z" in z.files else None, "aspect": float(wh[0]) / float(wh[1]),
+                              "face": z["face"][s] if "face" in z.files else None,
+                              "face_mask": z["face_mask"][s] if "face_mask" in z.files else None})
     return clips
 
 
