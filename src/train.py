@@ -106,6 +106,7 @@ def main():
     ap.add_argument("--bones", action="store_true", help="손 뼈대 길이 비율 채널(40, 2D 로 근사한 깊이 방향 기울기)을 더한다")
     ap.add_argument("--finger-fold", action="store_true", help="손가락별 접힘과 이웃 대비 접힘 채널(20)을 더한다(T-031)")
     ap.add_argument("--hand-z", action="store_true", help="손가락 깊이 채널(42, MediaPipe 손 z)을 더한다. features-z 추출 결과 필요")
+    ap.add_argument("--face", action="store_true", help="얼굴 채널(73: 표정 66 + 머리 위치 6 + 검출 1)을 더한다. build_dataset --full-fps 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
     ap.add_argument("--exclude", default="", help="뺄 클립 목록 json(tools/check_mislabels.py 출력의 exclude)")
@@ -122,6 +123,8 @@ def main():
            "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold,
            "final_epochs": a.final, "aug": not a.no_aug}
     feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
+    if a.face:                                    # 끈 상태의 cfg·feat 는 예전 실험과 같게 둔다
+        cfg["face"] = feat["face"] = True
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
