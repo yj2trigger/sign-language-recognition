@@ -29,6 +29,33 @@ def test_select_is_reproducible_and_sorted():
     assert pool == 100 and a == b and a == sorted(a) and len(set(a)) == 10 and a != c
 
 
+def test_v2_normalize_and_review():
+    rows = (rows_for(1501, "하남시청")[:-1] + [(1501, 18, "하남시청\n")]          # 줄바꿈만 다름 -> 통과
+            + rows_for(1502, "자다")[:-2] + [(1502, 17, "자다3"), (1502, 18, "자다3")]   # 대표 이름 + 순번 -> 통과
+            + rows_for(1503, "잠실")
+            + rows_for(1504, "종합운동장")[:-1] + [(1504, 18, "잠실1")]           # 다른 번호의 이름 + 숫자 -> 확인 대상
+            + rows_for(1505, "창피하다")
+            + rows_for(1506, "동구주민지원센터")[:-1] + [(1506, 18, "창피하다")]   # 다른 번호의 이름 -> 확인 대상
+            + rows_for(1507, "완주군수어통역센터")[:-1] + [(1507, 18, "완완주군수어통역센터")]   # 오타 -> 통과
+            + rows_for(1508, "막히다") + rows_for(1509, "막히다")                   # 이름 공유 -> 둘 다 후보
+            + rows_for(1510, "엄마")[:-1]                                           # 수행자 누락 -> 제외
+            + rows_for(1511, "X")[:9] + [(1511, s, "Y") for s in range(10, 19)])  # 다수 이름이 절반 이하 -> 제외
+    pool, points = sc.candidates_v2(rows, 1501, 3000)
+    assert pool == list(range(1501, 1510))
+    assert points == [(1504, 18, [1503]), (1506, 18, [1505])]
+
+
+def test_v1_unchanged_on_real_labels():
+    """실제 라벨이 있으면 v1 후보 수가 지난 실험 기록(1,176개)과 같은지 본다. 라벨이 없으면 건너뛴다."""
+    tr = "D:/_대학교/연구과제/데이터셋/수어영상/수어 영상/1.Training/[라벨]01_real_word_morpheme.zip"
+    va = "D:/sign-language-data/downloads/test-39478/004.수어영상/2.Validation/라벨링데이터/REAL/WORD/01_real_word_morpheme.zip"
+    if not (Path(tr).exists() and Path(va).exists()):
+        print("건너뜀: 실제 라벨 없음")
+        return
+    rows = sc.read_labels(tr) + sc.read_labels(va)
+    assert len(sc.candidates(rows, 1501, 3000)) == 1176
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

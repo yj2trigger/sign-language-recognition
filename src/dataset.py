@@ -9,16 +9,17 @@ import numpy as np
 import preprocess as pp
 
 
-def load_clips(feature_dirs, word_ids):
-    """npz 클립 중 선정한 단어 번호의 것만 읽는다. 각 클립은 {xy, mask, word, signer} 딕셔너리."""
-    keep = set(word_ids)
+def load_clips(feature_dirs, word_ids, exclude=()):
+    """npz 클립 중 선정한 단어 번호의 것만 읽는다. 각 클립은 {xy, mask, word, signer} 딕셔너리.
+    exclude: 뺄 (단어 번호, 수행자) 쌍(tools/check_mislabels.py 가 영상이 다른 단어로 판정한 클립)."""
+    keep, exclude = set(word_ids), {tuple(p) for p in exclude}
     clips = []
     for d in feature_dirs:
         for f in sorted(glob.glob(os.path.join(d, "*.npz"))):
             if f.endswith(".tmp.npz"):
                 continue
             z = np.load(f)
-            if int(z["word_id"]) in keep:
+            if int(z["word_id"]) in keep and (int(z["word_id"]), int(z["signer"])) not in exclude:
                 wh = z["wh"] if "wh" in z.files else (1920, 1080)       # 예전 추출(z 없음)은 모두 1920x1080
                 clips.append({"xy": z["xy"], "mask": z["mask"], "word": int(z["word_id"]), "signer": int(z["signer"]),
                               "z": z["z"] if "z" in z.files else None, "aspect": float(wh[0]) / float(wh[1])})

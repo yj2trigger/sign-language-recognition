@@ -108,6 +108,7 @@ def main():
     ap.add_argument("--hand-z", action="store_true", help="손가락 깊이 채널(42, MediaPipe 손 z)을 더한다. features-z 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
+    ap.add_argument("--exclude", default="", help="뺄 클립 목록 json(tools/check_mislabels.py 출력의 exclude)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
     ap.add_argument("--final", type=int, default=0,
@@ -124,7 +125,12 @@ def main():
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
-    clips = ds.load_clips(a.features, classes)
+    exclude = []
+    if a.exclude:
+        with open(a.exclude, encoding="utf-8") as f:
+            exclude = sorted(json.load(f)["exclude"])
+        cfg["exclude_sha"], cfg["n_exclude"] = ds.sha(exclude), len(exclude)
+    clips = ds.load_clips(a.features, classes, exclude)
     # 선정한 단어를 거의 다 수행한 수행자만 쓴다(일부만 받은 수행자가 시험 집합을 흔들지 않게)
     per = {}
     for c in clips:
