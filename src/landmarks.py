@@ -144,7 +144,7 @@ def extract_video(video_path, target_fps=15.0, phase_seed=0, complexity=1):
     """영상 전체 시간에서 target_fps 카메라가 찍었을 프레임만 MediaPipe 에 넣는다(나머지는 디코딩만 하고 건너뜀).
     추적도 그 간격으로 이어지므로 실제 target_fps 카메라와 같은 조건이 된다.
     위상은 phase_seed % (원본/목표 비율, 반올림) 로 정한다(30→15fps 면 짝·홀 프레임 중 하나).
-    반환: dict(xy (T,53,2), mask, z (T,53), face (T,33,2), face_mask, t (T,) 원본 기준 초, src_fps, phase, wh). 읽은 프레임이 없으면 None."""
+    반환: dict(xy (T,53,2), mask, z (T,53), face (T,33,2), face_mask, t (T,) 원본 기준 초, src_fps, phase, wh). 읽은 프레임이 없거나 영상이 중간에 끊기면 None."""
     cap = cv2.VideoCapture(str(video_path).replace("\\", "/"))
     try:
         src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -152,22 +152,24 @@ def extract_video(video_path, target_fps=15.0, phase_seed=0, complexity=1):
         phase = phase_seed % max(1, int(round(src_fps / target_fps)))
         keep = set(select_frames(n, src_fps, target_fps, phase))
         out = {k: [] for k in ("xy", "mask", "z", "face", "face_mask", "t")}
-        wh = None
+        wh, done = None, 0
         with mp.solutions.holistic.Holistic(static_image_mode=False, model_complexity=complexity) as holistic:
             for i in range(n):
                 if i not in keep:
                     if not cap.grab():
                         break
+                    done = i + 1
                     continue
                 ok, bgr = cap.read()
                 if not ok:
                     break
+                done = i + 1
                 xy, mask, z, wh, face, fmask = process_frame(holistic, bgr, with_face=True)
                 for k, v in zip(("xy", "mask", "z", "face", "face_mask", "t"), (xy, mask, z, face, fmask, i / src_fps)):
                     out[k].append(v)
     finally:
         cap.release()
-    if not out["xy"]:
+    if not out["xy"] or done < n - 2:        # 중간에 읽기 실패(메모리 부족 등)로 잘린 영상은 저장하지 않는다(다시 실행하면 재시도). 끝 1~2장은 컨테이너 표기 오차
         return None
     res = {k: np.stack(v) for k, v in out.items()}
     res["t"] = res["t"].astype(np.float32)
