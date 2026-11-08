@@ -46,7 +46,11 @@ def _work(name):
     if os.path.exists(dst):
         return base, "skip"
     word, signer = NAME.match(base).groups()
-    lab = json.loads(_zl.read("morpheme/%s/%s_morpheme.json" % (signer, base)).decode("utf-8"))
+    try:
+        raw = _zl.read("morpheme/%s/%s_morpheme.json" % (signer, base))
+    except KeyError:                               # 라벨 파일 이름이 틀린 클립(예: WORD1536_REAL10_U_F)은 넘긴다. 예외가 나면 pool 전체가 멈춘다
+        return base, "nojson"
+    lab = json.loads(raw.decode("utf-8"))
     if not lab["data"]:
         return base, "nolabel"
     seg = lab["data"][0]
