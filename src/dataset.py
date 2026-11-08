@@ -34,11 +34,11 @@ def load_clips(feature_dirs, word_ids, exclude=()):
             z = np.load(f)
             if int(z["word_id"]) in keep and (int(z["word_id"]), int(z["signer"])) not in exclude:
                 s = segment(z)
+                cut = lambda k: z[k][s].copy() if k in z.files else None   # copy: 잘라낸 뷰가 영상 전체 배열을 붙잡지 않게(1,500단어에서 0.6GB)
                 wh = z["wh"] if "wh" in z.files else (1920, 1080)       # 예전 추출(z 없음)은 모두 1920x1080
-                clips.append({"xy": z["xy"][s], "mask": z["mask"][s], "word": int(z["word_id"]), "signer": int(z["signer"]),
-                              "z": z["z"][s] if "z" in z.files else None, "aspect": float(wh[0]) / float(wh[1]),
-                              "face": z["face"][s] if "face" in z.files else None,
-                              "face_mask": z["face_mask"][s] if "face_mask" in z.files else None})
+                clips.append({"xy": cut("xy"), "mask": cut("mask"), "word": int(z["word_id"]), "signer": int(z["signer"]),
+                              "z": cut("z"), "aspect": float(wh[0]) / float(wh[1]),
+                              "face": cut("face"), "face_mask": cut("face_mask")})
     return clips
 
 
