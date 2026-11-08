@@ -128,7 +128,7 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
 
 
 def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False, angles=False, traj=False, pos_aug=False,
-                   bones=False, origin="shoulder", hand_z=False, folds=False, face=False):
+                   bones=False, origin="shoulder", hand_z=False, folds=False, face=False, dtype=np.float32):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
     rng = np.random.default_rng(seed)
@@ -137,7 +137,7 @@ def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False
         X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug,
                             angles=angles, traj=traj, pos_aug=pos_aug, bones=bones, origin=origin, hand_z=hand_z,
                             folds=folds, face=face)
-        banks.append(X)
+        banks.append(X.astype(dtype, copy=False))   # float16 이면 메모리 절반(1,500단어 bank 가 RAM 을 넘어서)
     return np.stack(banks), y
 
 

@@ -65,7 +65,7 @@ def train_one(name, bank, va, classes, cfg, seed):
             if len(b) < 2:                                    # BatchNorm 은 표본 1개 배치를 못 받는다
                 continue
             opt.zero_grad()
-            loss_fn(model(torch.from_numpy(X[b])), torch.from_numpy(y[b])).backward()
+            loss_fn(model(torch.from_numpy(X[b]).float()), torch.from_numpy(y[b])).backward()
             opt.step()
         sched.step()
         if va is None:                                    # 최종 모델: 검증 수행자 없이 정한 에폭까지 학습
@@ -109,6 +109,7 @@ def main():
     ap.add_argument("--face", action="store_true", help="얼굴 채널(73: 표정 66 + 머리 위치 6 + 검출 1)을 더한다. build_dataset --full-fps 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
+    ap.add_argument("--bank-fp16", action="store_true", help="증강본을 float16 으로 저장(메모리 절반). 배치마다 float32 로 바꿔 학습")
     ap.add_argument("--exclude", default="", help="뺄 클립 목록 json(tools/check_mislabels.py 출력의 exclude)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
@@ -125,6 +126,9 @@ def main():
     feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
     if a.face:                                    # 끈 상태의 cfg·feat 는 예전 실험과 같게 둔다
         cfg["face"] = feat["face"] = True
+    bank_kw = {}
+    if a.bank_fp16:                               # 끈 상태의 cfg 는 예전 실험과 같게 둔다
+        cfg["bank_fp16"], bank_kw = True, {"dtype": np.float16}
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
@@ -148,7 +152,7 @@ def main():
         git = git_state()
         os.makedirs(a.save_models, exist_ok=True)
         bank = ds.augmented_bank([c for c in clips if c["signer"] in set(signers)], classes, cfg["length"], cfg["hand_rel"],
-                                 cfg["bank"], seed=0, fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+                                 cfg["bank"], seed=0, fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat, **bank_kw)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 t = time.time()
@@ -179,7 +183,7 @@ def main():
             bank = (X[None], y)
         else:
             bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi,
-                                     fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+                                     fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat, **bank_kw)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 path = os.path.join(a.out, "%s-f%d-s%d.json" % (name, fi, seed))
