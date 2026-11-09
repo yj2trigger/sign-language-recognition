@@ -22,10 +22,14 @@ import models
 from winpower import keep_awake, no_power_throttling
 
 
+# 워크트리(D: 외장 SSD)는 소유자가 달라 git 이 거부한다(dubious ownership). 이 레포 경로만 안전 목록에 넣어 해시를 읽는다
+GIT = ["git", "-c", "safe.directory=" + os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")]
+
+
 def git_state():
     try:
-        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip())
+        h = subprocess.run(GIT + ["rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = bool(subprocess.run(GIT + ["status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip())
         return h + ("+수정중" if dirty else "")
     except Exception:
         return "알 수 없음"
