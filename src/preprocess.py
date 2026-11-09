@@ -178,14 +178,36 @@ def finger_folds(xy, mask, aspect, raise_thr=1.0):
     return np.concatenate(parts, axis=1)
 
 
+N_BODY = 53                                  # 몸 11 + 두 손 42. with_face 면 그 뒤에 얼굴 33점이 붙는다
+FACE_NOSE, FACE_R_EYE, FACE_L_EYE = 30, 10, 14   # landmarks.FACE_IDX 안의 위치: 코끝(1), 오른 눈꼬리(33), 왼 눈꼬리(263)
+FACE_HEAD = [30, 31, 32]                     # 코끝, 턱, 이마
+
+
+def face_expression(face, fmask):
+    """얼굴 33점 -> (T, 66): 코끝 원점, 두 눈꼬리 거리 1(얼굴 크기·위치와 무관한 표정 모양). 얼굴이 안 보인 프레임은 0."""
+    size = np.linalg.norm(face[:, FACE_R_EYE] - face[:, FACE_L_EYE], axis=-1)
+    ok = fmask.all(1) & (size > 1e-6)
+    rel = (face - face[:, FACE_NOSE:FACE_NOSE + 1]) / np.maximum(size, 1e-6)[:, None, None]
+    rel[~ok] = 0
+    return rel.reshape(len(face), -1)
+
+
 def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=False, with_traj=False,
-                   with_bones=False, origin="shoulder", z=None, aspect=16 / 9, with_hand_z=False, with_folds=False):
+                   with_bones=False, origin="shoulder", z=None, aspect=16 / 9, with_hand_z=False, with_folds=False,
+                   with_face=False):
     """(T, 53, 2)·(T, 53) -> (length, F). 순서: 몸 기준 좌표 106 + [손 상대 좌표 84] + [손가락 각도 30] + [손목 궤적 4]
-    + [손 뼈대 길이 비율 40] + [손 깊이 42] + [손가락 접힘 20] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None."""
+    + [손 뼈대 길이 비율 40] + [손 깊이 42] + [손가락 접힘 20] + [얼굴 73] + 마스크 53. 어깨가 한 번도 안 보인 클립은 None.
+    with_face 면 입력이 (T, 86, 2)·(T, 86)(53점 뒤에 얼굴 33점)이고, 얼굴 73 = 표정 66 + 머리 위치 6(코끝·턱·이마의
+    몸 기준 좌표) + 얼굴 검출 1. 얼굴은 몸과 같은 정규화·결측 보간을 거친다."""
     norm = normalize(xy, mask, origin)
     if norm is None:
         return None
     filled = fill_missing(norm, mask, max_gap)
+    if with_face:
+        face, fmask = filled[:, N_BODY:], mask[:, N_BODY:]
+        head = np.where(fmask[:, FACE_HEAD, None], face[:, FACE_HEAD], 0).reshape(len(face), -1)
+        face_part = np.concatenate([face_expression(face, fmask), head, fmask.any(1, keepdims=True)], axis=1)
+        xy, mask, filled = xy[:, :N_BODY], mask[:, :N_BODY], filled[:, :N_BODY]
     parts = [filled.reshape(len(filled), -1)]
     if with_hand_rel:
         parts.append(hand_relative(filled, mask).reshape(len(filled), -1))
@@ -199,6 +221,8 @@ def build_features(xy, mask, length, max_gap=5, with_hand_rel=True, with_angles=
         parts.append(hand_depth(xy, z, mask, aspect))
     if with_folds:
         parts.append(finger_folds(xy, mask, aspect))
+    if with_face:
+        parts.append(face_part.astype(np.float32))
     parts.append(mask.astype(np.float32))
     feat = np.concatenate(parts, axis=1)
     return resample(feat, length).astype(np.float32)    # 보간 가중치가 float64 라 리샘플 뒤에 float32 로 맞춘다

@@ -9,19 +9,36 @@ import numpy as np
 import preprocess as pp
 
 
-def load_clips(feature_dirs, word_ids):
-    """npz 클립 중 선정한 단어 번호의 것만 읽는다. 각 클립은 {xy, mask, word, signer} 딕셔너리."""
-    keep = set(word_ids)
+SEG_MARGIN = 0.5   # 라벨 구간 앞뒤 여유(초). 예전 구간 추출(landmarks.extract_clip)과 같은 값
+
+
+def segment(z, margin=SEG_MARGIN):
+    """영상 전체 npz(full)에서 라벨 구간 ±margin 의 프레임 번호 범위. 예전 npz 면 전체."""
+    if "full" not in z.files:
+        return slice(None)
+    t = z["t"]
+    return slice(int(np.searchsorted(t, float(z["seg_start"]) - margin)),
+                 int(np.searchsorted(t, float(z["seg_end"]) + margin, side="right")))
+
+
+def load_clips(feature_dirs, word_ids, exclude=()):
+    """npz 클립 중 선정한 단어 번호의 것만 읽는다. 각 클립은 {xy, mask, word, signer} 딕셔너리.
+    exclude: 뺄 (단어 번호, 수행자) 쌍(tools/check_mislabels.py 가 영상이 다른 단어로 판정한 클립).
+    영상 전체 npz 는 라벨 구간 ±0.5초로 잘라 예전 클립과 같은 모양으로 만든다(얼굴 점이 있으면 face, face_mask 도 담는다)."""
+    keep, exclude = set(word_ids), {tuple(p) for p in exclude}
     clips = []
     for d in feature_dirs:
         for f in sorted(glob.glob(os.path.join(d, "*.npz"))):
             if f.endswith(".tmp.npz"):
                 continue
             z = np.load(f)
-            if int(z["word_id"]) in keep:
+            if int(z["word_id"]) in keep and (int(z["word_id"]), int(z["signer"])) not in exclude:
+                s = segment(z)
+                cut = lambda k: z[k][s].copy() if k in z.files else None   # copy: 잘라낸 뷰가 영상 전체 배열을 붙잡지 않게(1,500단어에서 0.6GB)
                 wh = z["wh"] if "wh" in z.files else (1920, 1080)       # 예전 추출(z 없음)은 모두 1920x1080
-                clips.append({"xy": z["xy"], "mask": z["mask"], "word": int(z["word_id"]), "signer": int(z["signer"]),
-                              "z": z["z"] if "z" in z.files else None, "aspect": float(wh[0]) / float(wh[1])})
+                clips.append({"xy": cut("xy"), "mask": cut("mask"), "word": int(z["word_id"]), "signer": int(z["signer"]),
+                              "z": cut("z"), "aspect": float(wh[0]) / float(wh[1]),
+                              "face": cut("face"), "face_mask": cut("face_mask")})
     return clips
 
 
@@ -75,26 +92,33 @@ def augment(xy, mask, rng, fps_aug=False, pos_aug=False, z=None):
 
 
 def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.0, fps_aug=False,
-              angles=False, traj=False, pos_aug=False, bones=False, origin="shoulder", hand_z=False, folds=False):
+              angles=False, traj=False, pos_aug=False, bones=False, origin="shoulder", hand_z=False, folds=False,
+              face=False):
     """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다.
-    fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용)."""
+    fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용).
+    face 면 얼굴 33점을 53점 뒤에 붙여 같은 증강(자르기·잡음·회전·결측)을 받게 한 뒤 얼굴 특징 73채널을 더한다."""
     index = {w: i for i, w in enumerate(classes)}
     X, y, sg = [], [], []
     for c in clips:
         z = c.get("z") if hand_z else None
         if hand_z and z is None:
             raise ValueError("hand_z 를 쓰려면 z 가 저장된 추출 결과(features-z)가 필요하다")
+        cxy, cmask = c["xy"], c["mask"]
+        if face:
+            if c.get("face") is None:
+                raise ValueError("face 를 쓰려면 얼굴 점이 저장된 추출 결과(build_dataset --full-fps)가 필요하다")
+            cxy, cmask = np.concatenate([cxy, c["face"]], 1), np.concatenate([cmask, c["face_mask"]], 1)
         if rng is not None:
-            out = augment(c["xy"], c["mask"], rng, fps_aug, pos_aug, z=z)
+            out = augment(cxy, cmask, rng, fps_aug, pos_aug, z=z)
         elif fps_ratio != 1.0:
-            out = subsample(c["xy"], c["mask"], fps_ratio, z=z)
+            out = subsample(cxy, cmask, fps_ratio, z=z)
         else:
-            out = (c["xy"], c["mask"]) if z is None else (c["xy"], c["mask"], z)
+            out = (cxy, cmask) if z is None else (cxy, cmask, z)
         xy, mask = out[0], out[1]
         f = pp.build_features(xy, mask, length, with_hand_rel=with_hand_rel, with_angles=angles, with_traj=traj,
                               with_bones=bones, origin=origin, z=out[2] if hand_z else None,
                               aspect=c.get("aspect", 16 / 9), with_hand_z=hand_z,
-                              with_folds=folds)
+                              with_folds=folds, with_face=face)
         if f is None:
             continue
         X.append(f)
@@ -104,7 +128,7 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
 
 
 def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False, angles=False, traj=False, pos_aug=False,
-                   bones=False, origin="shoulder", hand_z=False, folds=False):
+                   bones=False, origin="shoulder", hand_z=False, folds=False, face=False, dtype=np.float32):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
     rng = np.random.default_rng(seed)
@@ -112,8 +136,8 @@ def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False
     for _ in range(k):
         X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug,
                             angles=angles, traj=traj, pos_aug=pos_aug, bones=bones, origin=origin, hand_z=hand_z,
-                            folds=folds)
-        banks.append(X)
+                            folds=folds, face=face)
+        banks.append(X.astype(dtype, copy=False))   # float16 이면 메모리 절반(1,500단어 bank 가 RAM 을 넘어서)
     return np.stack(banks), y
 
 

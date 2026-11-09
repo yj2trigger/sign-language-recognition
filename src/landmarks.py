@@ -15,6 +15,11 @@ import numpy as np
 POSE_IDX = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16]   # 코, 눈2, 귀2, 어깨2, 팔꿈치2, 손목2
 N_POINTS = 11 + 21 + 21
 MIN_VISIBILITY = 0.5
+# 비수지 신호용 얼굴 메시 점(468점 중 33점). 53점과 따로 저장해 기존 점 순서를 바꾸지 않는다.
+FACE_IDX = [70, 63, 105, 66, 107, 300, 293, 334, 296, 336,    # 눈썹 오른쪽 5 · 왼쪽 5
+            33, 133, 159, 145, 263, 362, 386, 374,             # 눈 오른쪽(꼬리 2, 위·아래 눈꺼풀) · 왼쪽
+            61, 291, 0, 17, 37, 267, 84, 314, 13, 14, 78, 308,  # 입 바깥 8 · 안쪽 4
+            1, 152, 10]                                        # 코끝, 턱, 이마(머리 방향)
 
 
 def _frame(res):
@@ -34,6 +39,16 @@ def _frame(res):
             z[start:start + 21] = [p.z for p in hand.landmark]
             mask[start:start + 21] = True
     return xy, mask, z
+
+
+def _face(res):
+    """반환: face (33,2), face_mask (33,). 얼굴이 안 잡힌 프레임은 0 과 False."""
+    face = np.zeros((len(FACE_IDX), 2), np.float32)
+    if not res.face_landmarks:
+        return face, np.zeros(len(FACE_IDX), bool)
+    lm = res.face_landmarks.landmark
+    face[:] = [(lm[i].x, lm[i].y) for i in FACE_IDX]
+    return face, np.ones(len(FACE_IDX), bool)
 
 
 TARGET_ASPECT = 16 / 9   # 학습 데이터(1920x1080)의 화면비
@@ -65,12 +80,31 @@ def center_crop(bgr, aspect):
     return bgr[y0:y0 + nh]
 
 
-def process_frame(holistic, bgr):
+def process_frame(holistic, bgr, with_face=False):
     """MediaPipe 에 넣는 단일 경로: 16:9 틀에 넣고 → RGB 로 바꿔 → 추출. 학습 데이터 추출과 실시간·영상 파일 입력이 모두 이 함수를 쓴다.
-    반환: (xy, mask, z, 처리한 프레임의 (너비, 높이))"""
+    반환: (xy, mask, z, 처리한 프레임의 (너비, 높이)). with_face 이면 뒤에 (face, face_mask) 를 더한다."""
     fitted = fit_16x9(bgr)
-    xy, mask, z = _frame(holistic.process(cv2.cvtColor(fitted, cv2.COLOR_BGR2RGB)))
-    return xy, mask, z, (fitted.shape[1], fitted.shape[0])
+    res = holistic.process(cv2.cvtColor(fitted, cv2.COLOR_BGR2RGB))
+    xy, mask, z = _frame(res)
+    wh = (fitted.shape[1], fitted.shape[0])
+    if with_face:
+        return (xy, mask, z, wh) + _face(res)
+    return xy, mask, z, wh
+
+
+def select_frames(n_frames, src_fps, target_fps, phase=0):
+    """원본 n_frames 장 중 target_fps 카메라가 찍었을 프레임 번호. 원본 fps 가 목표의 정수배가 아니어도(29.97 등) 된다.
+    phase 는 원본 프레임 단위의 시작 어긋남(0 ≤ phase < 원본/목표 비율). 실제 카메라 박자와 수어 시작이 무관한 것을 흉내 낸다."""
+    step = src_fps / target_fps
+    if step < 1:
+        raise ValueError("목표 fps(%.2f)가 원본 fps(%.2f)보다 크다" % (target_fps, src_fps))
+    idx, k = [], 0
+    while True:
+        i = int(round(phase + k * step))
+        if i >= n_frames:
+            return idx
+        idx.append(i)
+        k += 1
 
 
 def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=False, crop_aspect=None):
@@ -104,3 +138,40 @@ def extract_clip(video_path, start_s, end_s, margin_s=0.5, complexity=1, with_z=
     if with_z:
         return np.stack(xys), np.stack(masks), fps, np.stack(zs), wh
     return np.stack(xys), np.stack(masks), fps
+
+
+def extract_video(video_path, target_fps=15.0, phase_seed=0, complexity=1):
+    """영상 전체 시간에서 target_fps 카메라가 찍었을 프레임만 MediaPipe 에 넣는다(나머지는 디코딩만 하고 건너뜀).
+    추적도 그 간격으로 이어지므로 실제 target_fps 카메라와 같은 조건이 된다.
+    위상은 phase_seed % (원본/목표 비율, 반올림) 로 정한다(30→15fps 면 짝·홀 프레임 중 하나).
+    반환: dict(xy (T,53,2), mask, z (T,53), face (T,33,2), face_mask, t (T,) 원본 기준 초, src_fps, phase, wh). 읽은 프레임이 없거나 영상이 중간에 끊기면 None."""
+    cap = cv2.VideoCapture(str(video_path).replace("\\", "/"))
+    try:
+        src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        phase = phase_seed % max(1, int(round(src_fps / target_fps)))
+        keep = set(select_frames(n, src_fps, target_fps, phase))
+        out = {k: [] for k in ("xy", "mask", "z", "face", "face_mask", "t")}
+        wh, done = None, 0
+        with mp.solutions.holistic.Holistic(static_image_mode=False, model_complexity=complexity) as holistic:
+            for i in range(n):
+                if i not in keep:
+                    if not cap.grab():
+                        break
+                    done = i + 1
+                    continue
+                ok, bgr = cap.read()
+                if not ok:
+                    break
+                done = i + 1
+                xy, mask, z, wh, face, fmask = process_frame(holistic, bgr, with_face=True)
+                for k, v in zip(("xy", "mask", "z", "face", "face_mask", "t"), (xy, mask, z, face, fmask, i / src_fps)):
+                    out[k].append(v)
+    finally:
+        cap.release()
+    if not out["xy"] or done < n - 2:        # 중간에 읽기 실패(메모리 부족 등)로 잘린 영상은 저장하지 않는다(다시 실행하면 재시도). 끝 1~2장은 컨테이너 표기 오차
+        return None
+    res = {k: np.stack(v) for k, v in out.items()}
+    res["t"] = res["t"].astype(np.float32)
+    res.update(src_fps=float(src_fps), phase=phase, wh=wh)
+    return res

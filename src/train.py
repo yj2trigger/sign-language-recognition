@@ -22,10 +22,14 @@ import models
 from winpower import keep_awake, no_power_throttling
 
 
+# 워크트리(D: 외장 SSD)는 소유자가 달라 git 이 거부한다(dubious ownership). 이 레포 경로만 안전 목록에 넣어 해시를 읽는다
+GIT = ["git", "-c", "safe.directory=" + os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")]
+
+
 def git_state():
     try:
-        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip())
+        h = subprocess.run(GIT + ["rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = bool(subprocess.run(GIT + ["status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip())
         return h + ("+수정중" if dirty else "")
     except Exception:
         return "알 수 없음"
@@ -65,7 +69,7 @@ def train_one(name, bank, va, classes, cfg, seed):
             if len(b) < 2:                                    # BatchNorm 은 표본 1개 배치를 못 받는다
                 continue
             opt.zero_grad()
-            loss_fn(model(torch.from_numpy(X[b])), torch.from_numpy(y[b])).backward()
+            loss_fn(model(torch.from_numpy(X[b]).float()), torch.from_numpy(y[b])).backward()
             opt.step()
         sched.step()
         if va is None:                                    # 최종 모델: 검증 수행자 없이 정한 에폭까지 학습
@@ -106,8 +110,11 @@ def main():
     ap.add_argument("--bones", action="store_true", help="손 뼈대 길이 비율 채널(40, 2D 로 근사한 깊이 방향 기울기)을 더한다")
     ap.add_argument("--finger-fold", action="store_true", help="손가락별 접힘과 이웃 대비 접힘 채널(20)을 더한다(T-031)")
     ap.add_argument("--hand-z", action="store_true", help="손가락 깊이 채널(42, MediaPipe 손 z)을 더한다. features-z 추출 결과 필요")
+    ap.add_argument("--face", action="store_true", help="얼굴 채널(73: 표정 66 + 머리 위치 6 + 검출 1)을 더한다. build_dataset --full-fps 추출 결과 필요")
     ap.add_argument("--origin", default="shoulder", choices=["shoulder", "nose"], help="좌표 원점: 어깨 중점 또는 코(얼굴 기준)")
     ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
+    ap.add_argument("--bank-fp16", action="store_true", help="증강본을 float16 으로 저장(메모리 절반). 배치마다 float32 로 바꿔 학습")
+    ap.add_argument("--exclude", default="", help="뺄 클립 목록 json(tools/check_mislabels.py 출력의 exclude)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
     ap.add_argument("--final", type=int, default=0,
@@ -121,10 +128,20 @@ def main():
            "angles": a.angles, "traj": a.traj, "pos_aug": a.pos_aug, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold,
            "final_epochs": a.final, "aug": not a.no_aug}
     feat = {"angles": a.angles, "traj": a.traj, "bones": a.bones, "origin": a.origin, "hand_z": a.hand_z, "folds": a.finger_fold}
+    if a.face:                                    # 끈 상태의 cfg·feat 는 예전 실험과 같게 둔다
+        cfg["face"] = feat["face"] = True
+    bank_kw = {}
+    if a.bank_fp16:                               # 끈 상태의 cfg 는 예전 실험과 같게 둔다
+        cfg["bank_fp16"], bank_kw = True, {"dtype": np.float16}
 
     with open(a.classes, encoding="utf-8") as f:
         classes = sorted(json.load(f)["word_ids"])
-    clips = ds.load_clips(a.features, classes)
+    exclude = []
+    if a.exclude:
+        with open(a.exclude, encoding="utf-8") as f:
+            exclude = sorted(json.load(f)["exclude"])
+        cfg["exclude_sha"], cfg["n_exclude"] = ds.sha(exclude), len(exclude)
+    clips = ds.load_clips(a.features, classes, exclude)
     # 선정한 단어를 거의 다 수행한 수행자만 쓴다(일부만 받은 수행자가 시험 집합을 흔들지 않게)
     per = {}
     for c in clips:
@@ -139,7 +156,7 @@ def main():
         git = git_state()
         os.makedirs(a.save_models, exist_ok=True)
         bank = ds.augmented_bank([c for c in clips if c["signer"] in set(signers)], classes, cfg["length"], cfg["hand_rel"],
-                                 cfg["bank"], seed=0, fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+                                 cfg["bank"], seed=0, fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat, **bank_kw)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 t = time.time()
@@ -170,7 +187,7 @@ def main():
             bank = (X[None], y)
         else:
             bank = ds.augmented_bank(sel("train"), classes, cfg["length"], cfg["hand_rel"], cfg["bank"], seed=fi,
-                                     fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat)
+                                     fps_aug=cfg["fps_aug"], pos_aug=cfg["pos_aug"], **feat, **bank_kw)
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 path = os.path.join(a.out, "%s-f%d-s%d.json" % (name, fi, seed))
