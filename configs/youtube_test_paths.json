@@ -1,0 +1,10 @@
+{
+  "_description": "유튜브 외부 수어 테스트 데이터 저장 경로 설정. 코드만 GitHub에 저장하며 실제 영상/라벨/NPZ/결과는 로컬 드라이브에 저장.",
+  "data_root": "D:/sign-language-data/youtube_test",
+  "directories": {
+    "videos": "videos",
+    "labels": "labels",
+    "features": "features",
+    "results": "results"
+  }
+}
