@@ -1,0 +1,62 @@
+{
+    "model": "D:\\UNIVERSITY\\UAI_project2\\FILE2\\sign-language-recognition\\models\\final\\final-tcn-c300-s0.pt",
+    "model_type": "tcn",
+    "model_classes": 300,
+    "total_npz": 9,
+    "evaluated_clips": 8,
+    "skipped_clips": 1,
+    "accuracy": 0.0,
+    "macro_f1": 0.0,
+    "repeats": 5,
+    "total_elapsed_seconds": 0.16552959999535233,
+    "inference_time_ms": {
+        "count": 40,
+        "mean": 2.17449750052765,
+        "median": 2.0774000004166737,
+        "mode_interval": {
+            "from": 2.0,
+            "to": 3.0,
+            "count": 20
+        },
+        "min": 1.4338000037241727,
+        "max": 4.220900009386241,
+        "std": 0.5434005630402596,
+        "p95": 2.9328550030186307
+    },
+    "preprocessing_time_ms": {
+        "count": 8,
+        "mean": 2.2677124998153886,
+        "median": 2.36389999918174,
+        "mode_interval": {
+            "from": 2.0,
+            "to": 3.0,
+            "count": 5
+        },
+        "min": 1.6389000084018335,
+        "max": 2.748700004303828,
+        "std": 0.3631003519650086,
+        "p95": 2.693049998197239
+    },
+    "clips_per_second": {
+        "count": 40,
+        "mean": 485.4851205867898,
+        "median": 481.462838175938,
+        "mode_interval": {
+            "from": 400.0,
+            "to": 410.0,
+            "count": 3
+        },
+        "min": 236.91629694525963,
+        "max": 697.4473409140645,
+        "std": 107.63925053535884,
+        "p95": 662.9105953973576
+    },
+    "skipped": [
+        {
+            "file": "yt_000004.npz",
+            "label": "삼십",
+            "word_id": 2662,
+            "reason": "학습 클래스에 없는 단어: 삼십 (ID 2662)"
+        }
+    ]
+}

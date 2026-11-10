@@ -1,0 +1,10 @@
+video_id,label,start_sec,end_sec,start_frame,end_frame
+news_cropped,피해자,4.3,4.9,129,147
+news_cropped,피해자,14.0,14.5,420,435
+news_cropped,피해자,15.6,16.2,468,486
+news_cropped,삼십,24.1,24.8,723,744
+news_cropped,삼천만,66.1,66.8,1983,2004
+news_cropped,피해자,93.6,94.2,2808,2826
+news_cropped,피해자,95.7,96.3,2871,2889
+news_cropped,피해자,105.6,106.4,3168,3192
+news_cropped,피해자,117.0,117.5,3510,3525
