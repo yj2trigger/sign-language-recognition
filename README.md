@@ -1,5 +1,9 @@
 # sign-language-recognition
 
+지문자 정답 준비의 확인 범위·파서 API·미확인 사항은
+[분석 문서](docs/label_preparation.md), 실행 결과는
+[검증 기록](docs/label_preparation_validation.md)을 참고한다.
+
 랜드마크 기반 딥러닝 모델을 활용한 실시간 수어 번역 시스템 (SW·AI융합연구개발 일반과제, 2026.10~2026.11)
 
 MediaPipe Holistic으로 상체 11점과 양손 42점(총 53점)을 추출하고, LSTM/GRU와 1D-CNN(TCN)으로 단어를 인식한다.
