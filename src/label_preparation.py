@@ -95,11 +95,8 @@ def _unique_object(pairs):
     return obj
 
 
-def decode_morphemes(raw: bytes) -> tuple[Segment, ...]:
-    """Decode UTF-8 JSON bytes (optional BOM); return validated morphemes.
-
-    No encoding fallback or lossy replacement is performed. No file is read.
-    """
+def decode_label_document(raw: bytes) -> dict:
+    """Decode a UTF-8 JSON object with duplicate-key protection; no file IO."""
     if not isinstance(raw, bytes):
         raise LabelError("input: expected UTF-8 bytes")
     try:
@@ -108,7 +105,14 @@ def decode_morphemes(raw: bytes) -> tuple[Segment, ...]:
         raise
     except (UnicodeError, ValueError, RecursionError):
         raise LabelError("input: invalid UTF-8 JSON") from None
-    return parse_morphemes(document)
+    if not isinstance(document, dict):
+        raise LabelError("root: expected object")
+    return document
+
+
+def decode_morphemes(raw: bytes) -> tuple[Segment, ...]:
+    """Decode UTF-8 JSON bytes (optional BOM); return validated morphemes."""
+    return parse_morphemes(decode_label_document(raw))
 
 
 def make_target(*, video_id: str, signer_id: str, text: str) -> Target:

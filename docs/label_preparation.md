@@ -1,6 +1,74 @@
 # 지문자 정답 준비 분석 (2026-11-11)
 
+## CROWD 실제 자료 검증 및 어댑터 확장
+
+이 절은 아래 최초 조사 당시의 미확인 사항을 갱신한다. 이제 확보한 CROWD 라벨의
+영상명과 문자열 대응은 확인했으며 `src/fingerspelling/crowd_labels.py`에 구현했다.
+도로명 분류·자모 토큰화·영상 내용 대조는 여전히 수행하지 않았다.
+
+요청 경로의 `D:/UNIVERS/`는 존재하지 않았다. 실제 파일은
+`D:/UNIVERSITY/UAI_project2/sign-language-data/fingerspelling/crowd/수어 영상/2.Validation/[라벨]01_crowd_morpheme.zip`
+이며 952,783바이트다. ZIP은 읽기 전용으로 열고 해제하지 않았다.
+
+확인된 형식(값·실제 ID는 생략):
+
+```text
+morpheme/{2자리 ID}/NIA_SL_FS{4자리 ID}_CROWD{2자리 ID}_F_morpheme.json
+metaData: {url: str, name: str, duration: number, exportedOn: str}
+data: [{start: number, end: number, attributes: [{name: str}]}]
+```
+
+모든 2,000개 파일에서 구간·이름 속성은 각각 하나이고, 예상 mp4 이름은
+`metaData.name`, `metaData.url`의 파일명 부분과 일치했다. 라벨 문자열은
+`data[0].attributes[0].name`에 있다. FS 1,000종, CROWD 2종이며 모든 FS에 2개 영상명이
+연결된다. 동일 FS의 문자열이 다른 그룹은 3개다. 공백/NFC로 통합하지 않으며
+영상별 원문을 그대로 보존하고 검토 대상 ID는 메모리에만 제공한다.
+동일 CROWD ID가 실세계에서 동일인임은 별도 명세 확인이 필요하다.
+
+| 신규 API | 입력 | 출력 / 계약 |
+|---|---|---|
+| `label_preparation.decode_label_document` | UTF-8 bytes | dict. 기존 중복 키·인코딩 검증을 공통화. `decode_morphemes` 계약은 동일 |
+| `expected_video_name` | ZIP 내부 JSON 경로 | 엄격한 ASCII 파일명·폴더 ID 일치 검증 후 mp4 basename |
+| `parse_crowd_label` | 내부 경로, JSON bytes | `CrowdLabel(fs_id, crowd_id, target)`. URL은 HTTP(S)만 허용하며 접속하지 않음 |
+| `find_conflicts` | CrowdLabel iterable | 원문이 다른 FS ID tuple. 비공개 로컬 검토용이며 공개 출력 금지 |
+| `read_crowd_zip` | ZIP 경로/zipfile이 지원하는 파일 객체, 선택적 크기 제한 | `CrowdReport`. 정상 레코드·비공개 검토 ID·고정 오류 코드별 개수 |
+| `CrowdReport.summary` | 없음 | 정수 집계 dict. 공개 가능한 출력은 이 집계로 제한 |
+| `compare_video_names` | CrowdReport, 선택적 영상 basename iterable | `VideoCheck`: 예상/제공/대응/누락/추가/중복 개수 및 상태 |
+
+`Target.signer_id`는 `CROWD` namespace와 ID를 연결한 로컬 그룹 키다. 실제 개인 정보가
+아니며 다른 데이터셋과 동일인 여부를 추정하지 않는다. `Target.text`를 정규화·수정하지
+않는다. `duration`, `exportedOn`은 매핑에 사용하지 않으며 메타데이터 전체의 유효성을
+검사하는 기능은 아니다. 도로명 접미사 후보는 `로` 또는 `길`로 끝나는 문자열이며
+확정된 클래스가 아니다. 한글 통계는 완성형 음절, 숫자 통계는 ASCII 0~9 포함 기준이다.
+
+파일별 오류는 코드별로 집계하고 해당 레코드를 제외한다. 중복 ZIP JSON명은
+첫/마지막 항목을 선택하지 않고 중복된 모든 항목을 제외한다. `json_count`에는 오류
+파일도 포함되고, FS/문자 통계는 정상 레코드만 대상으로 한다. 비JSON 파일과 디렉터리는
+파싱하지 않는다. 보고서에 오류가 있으면 영상 목록이 정상 부분집합과 같아도 `mismatch`다.
+
+기본 제한은 JSON당 1MiB, 엔트리 100,000개, 선언된 전체 JSON 비압축 크기 128,000,000바이트다.
+멤버를 순서대로 제한 읽기하며 ZIP 전체를 해제하지 않는다. 엔트리/전체 크기 제한 또는
+ZIP 열기 실패는 고정 코드 예외로 전체 처리를 중단한다. 중앙 디렉터리는 Python zipfile이
+먼저 메모리에 올리므로 임의의 초대형 비신뢰 ZIP에 대한 완전한 메모리 격리는 아니다.
+정상 레코드·중복/불일치 집계는 O(파일 수 + 문자열 총량) 메모리를 사용한다.
+
+영상 목록 `None`은 `not_provided`, 빈 목록은 제공된 빈 목록으로 취급한다. `matched`도
+**공급된 이름 목록의 일치**만 뜻하며 파일 존재·영상 내용 검증을 뜻하지 않는다.
+중복 개수는 첫 항목 이후의 추가 출현 수, 추가/누락 개수는 고유 이름 수다.
+비교에는 경로가 아닌 엄격한 CROWD mp4 basename을 공급한다.
+영상 목록을 자동 생성해 다시 비교한 결과를 실제 영상 검증으로 표시해서는 안 된다.
+
+기존 `build_dataset.py`는 WORD/REAL 전용이므로 수정하거나 CROWD에 적용하지 않았다.
+`landmarks.py`도 변경하지 않았다. 신규 모듈의 객체·정답·검토 ID를 직렬화하면
+비공개 파생 자료가 되므로 공개 저장소·로그로 내보내지 않는다. CLI/출력 파일 생성은 없다.
+
+검증 결과는 [실행 기록](label_preparation_validation.md)의 CROWD 절 참조.
+다음 단계는 불일치 3그룹의 비공개 검토, 실제 영상 목록 대조, 공식 수행자/도로명 분류
+정의·37종 목록·숫자 정책 확보, PR #11 main 반영 후 별도 자모 토큰화 연결이다.
+
 ## 결론과 근거 범위
+
+아래는 CROWD ZIP 확보 전의 최초 조사 기록이며, 현재 확인 범위는 위 절을 우선한다.
 
 이 변경은 **확인된 형태소 JSON 부분집합 파서와 내부 정답 표현**을 제공한다.
 도로명 지문자 전용 스키마·한글 도로명 매핑은 확인되지 않았다. 도로명 학습용

@@ -1,5 +1,62 @@
 # 실행 및 리뷰 기록
 
+## CROWD 확장 후 검증
+
+Windows PowerShell, 기존 Conda `sign-language`, Python 3.12.16에서 실행했다.
+이 절은 아래 최초 구현 시의 기록 이후 결과다. 데이터 기반 코드는 집계만 출력했고
+실제 문자열·URL·파일별 ID·검토 ID는 로그나 문서에 남기지 않았다.
+
+| 실제 ZIP 집계 | 사전 분석 | 어댑터 재검증 |
+|---|---:|---:|
+| JSON | 2,000 | 2,000 |
+| 정상 영상명·문자열 매핑 | 2,000 | 2,000 |
+| 오류 / 파일명 불일치 | 0 / 0 | 0 / 0 |
+| FS / CROWD ID 종류 | 1,000 / 2 | 1,000 / 2 |
+| 서로 다른 문자열을 가진 FS 그룹 | 3 | 3 |
+| 한글 완성형 음절 포함 | 1,950 | 1,950 |
+| ASCII 숫자 포함 | 382 | 382 |
+| 도로명 접미사 후보 | 1,356 | 1,356 |
+
+정상 레코드는 영상별 문자열을 보존했으며 FS 그룹 1,000개 모두 레코드 2개였다.
+기존 `decode_morphemes`로도 2,000개 전체를 다시 읽어 통과했다. 사전 분석과 차이 없음.
+실제 실패/예외 파일은 0개였다. ZIP SHA-256은 읽기 검증 전후 동일했다(해시는 비공개).
+요청의 `D:/UNIVERS/` 경로에는 파일이 없고 `D:/UNIVERSITY/` 아래 실제 파일을 사용했다.
+
+실행한 명령(기존 Conda Python 실행 파일은 아래 최초 기록 참조):
+
+```powershell
+python -B -m unittest discover -s tests -p test_crowd_labels.py -v
+python -B -m unittest discover -s tests -p test_label_preparation.py -q
+python -B -m pytest tests/test_preprocess.py tests/test_select_classes.py tests/test_extract_full.py -k 'not real_labels' -q
+git diff --check
+```
+
+실제 명령은 PATH의 python 대신 아래 기록의 절대 경로 실행 파일을 사용했다.
+실제 ZIP 검증은 Python stdin 스크립트에서 `read_crowd_zip`, `summary`,
+`compare_video_names(report)`를 호출하고, 별도 zipfile 순회에서 기존 파서를 호출했다.
+원문·매핑 manifest는 저장하지 않았다. 위 표는 그 실행의 비식별 집계 기록이다.
+
+| 구분 | 결과 |
+|---|---|
+| 신규 CROWD 합성 테스트 | 22개 통과 (손상 deflate 회귀 포함) |
+| 최종 선택 테스트 통합 실행 | 52개 통과, 76 subtests 통과, 1개 제외, 동일 경고 2개 |
+| 기존 라벨 파서 합성 회귀 | 13개 통과 |
+| 기존 전처리·클래스 선정·추출 합성 회귀 | 17개 통과, 실제 WORD 테스트 1개 제외, protobuf DeprecationWarning 2개 |
+| 공백 오류 검사 | `git diff --check` 통과 (Git의 LF→CRLF 안내는 있음) |
+| 실제 CROWD 라벨 매핑·기존 파서 호환성 | 2,000개 통과 |
+| 실제 영상 존재·내용·파일 목록 대조 | 미실행: 영상/목록 미제공, `not_provided` |
+| 전체 pytest·학습·실시간 | 미실행: torch 미설치 상태, 기존 실행 가능 범위만 검사 |
+| 전용 린트·포맷·타입·보안 검사 / GitHub Actions | 미실행: 해당 도구/CI 실행하지 않음 |
+
+구현 후 작성자 AI가 별도 검토 단계에서 정규식, 폴더 ID, 메타데이터 대응, Unicode와
+공백 보존, ZIP 제한, 예외 메시지, 기존 계약을 다시 읽었다. 손상 deflate에서 `zlib.error`가
+파일별 오류 집계 밖으로 빠질 수 있음을 발견해 `member_read`로 처리하도록 수정하고,
+압축 스트림을 손상시킨 합성 ZIP 회귀 테스트를 추가했다. 오류 라벨이 제외된 보고서를
+정상 영상 목록으로 오인하지 않는 테스트도 추가했다. 외부 독립 리뷰어/사람의 리뷰는
+미실행이며 팀 리뷰가 필요하다. 사람의 실행·검증을 AI의 결과와 혼동하지 않는다.
+
+## 최초 형태소 파서 구현 당시 기록
+
 2026-11-11, Windows PowerShell, Conda `sign-language`, Python **3.12.16**.
 PATH와 Windows py 런처에서는 Python을 찾지 못했으나 Conda 환경 등록 파일로
 기존 환경을 찾아 절대 경로로 실행했다. 패키지 설치·환경 변경 없음.
