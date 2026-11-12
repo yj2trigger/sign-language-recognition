@@ -35,9 +35,13 @@ class TCNNet(nn.Module):
         self.blocks = nn.Sequential(*[_Block(channels, d, dropout) for d in (1, 2, 4, 8)])
         self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(2 * channels, n_class))
 
-    def forward(self, x):
+    def features(self, x):
+        """머리 앞 풀링 출력 (B, 2*channels). 학습 때 보조 헤드(숫자 자릿값)가 같은 값을 쓴다."""
         h = self.blocks(self.inp(x.transpose(1, 2)))
-        return self.head(torch.cat([h.mean(2), h.amax(2)], dim=1))
+        return torch.cat([h.mean(2), h.amax(2)], dim=1)
+
+    def forward(self, x):
+        return self.head(self.features(x))
 
 
 class MLPBase(nn.Module):
