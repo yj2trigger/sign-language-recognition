@@ -1,3 +1,240 @@
+# CROWD 실제 키포인트 파서와 CTC 입력 어댑터
+
+## Commit 2 조사 및 구현
+
+작업 브랜치는 `feat/2-crowd-keypoint-adapter`이며 Base는 main이다. 시작 시 Commit 1이
+`ada2735`로 커밋되어 있었다. 미추적 PR 초안 `docs/fingerspelling_crowd_keypoints_pr.md`를
+보존해 이번 결과로 갱신했다. 조사일은 2026-11-13 (Asia/Seoul)이다.
+현재 결과는 이 절을 기준으로 읽으며 아래 Commit 1 기록은 당시 확보 현황을 보존한다.
+
+### 확보 자료 및 ZIP 검사
+
+실제 키포인트 경로는 예상 downloads 폴더의 하위 디렉터리에서 발견했다.
+
+```text
+D:\UNIVERSITY\UAI_project2\sign-language-data\fingerspelling\crowd\downloads\수어 영상\2.Validation\[라벨]01_crowd_keypoint.zip
+```
+
+| 항목 | 확인값 |
+| --- | --- |
+| 키포인트 ZIP 크기 | 1,411,121,080 bytes |
+| ZIP 파일 member 및 JSON 수 | 671,745 |
+| 압축 해제 시 총 크기 | 6,461,753,903 bytes |
+| 최대 JSON 크기 | 12,265 bytes |
+| 최대 member 압축률 | 약 7.213 |
+| 영상 ID 그룹 | 2,000 |
+| 영상별 프레임 수 | 최소 12, 최대 974 |
+| 프레임 번호 누락 및 중복 | 각각 0 |
+| ZIP CRC/읽기 오류 | 0 |
+| 원본 해시 | 전체 검사 전후 SHA-256 동일 |
+
+형태소 ZIP은 기존 `crowd/수어 영상/2.Validation/[라벨]01_crowd_morpheme.zip`에 있으며
+952,783 bytes, JSON 2,000개다. 전체 압축 해제를 수행하지 않고 zipfile로 순차 읽었다.
+실제 영상은 조사 루트에 0개다. 영상 내용과 라벨의 일치 여부는 미검증이다.
+
+### 실제 구조와 검증 결과
+
+파일명 규칙은 다음과 같다. 자리수와 폴더·파일의 video ID 일치를 검증한다.
+식별자 값은 산출물에 기록하지 않는다.
+
+```text
+keypoint/{CROWD 두 자리}/{VIDEO_BASE}/{VIDEO_BASE}_{프레임 열두 자리}_keypoints.json
+VIDEO_BASE = NIA_SL_FS{FS 네 자리}_CROWD{CROWD 두 자리}_F
+```
+
+샘플 JSON 최상위는 version, people, camparam이며 version은 1.3이다.
+people은 단일 객체로 person_id와 아래 배열을 가진다.
+
+| 필드 | 관절 수 | 1D 배열 길이 | 해석 |
+| --- | --- | --- | --- |
+| pose_keypoints_2d | 25 | 75 | x,y,confidence triples |
+| face_keypoints_2d | 70 | 210 | x,y,confidence triples |
+| hand_left_keypoints_2d | 21 | 63 | x,y,confidence triples |
+| hand_right_keypoints_2d | 21 | 63 | x,y,confidence triples |
+| 각 그룹의 _3d 배열 | 0 | 0 | 샘플에서 비어 있음 |
+
+AI-Hub 공개 페이지는 위 배열의 x,y,confidence와 30fps 분할 이미지를 설명한다.
+OpenPose는 출력 scale 설정에 따라 좌표 단위가 달라질 수 있으므로 숫자 크기만으로
+pixel 좌표라고 확정하지 않는다. 이미지 크기, 좌표 원점·방향·단위, BODY_25/Hand21
+내보내기 의미, anatomical left/right 및 비반전 여부는 SourceSpec에 검증 근거와 함께
+명시해야 한다. JSON person_id를 공식 수행자 ID로 사용하지 않는다.
+[AI-Hub 데이터 설명](https://aihub.or.kr/aihubdata/data/view.do?dataSetSn=103),
+[OpenPose 출력 명세](https://github.com/CMU-Perceptual-Computing-Lab/openpose/blob/master/doc/02_output.md)
+
+| 전체 순차 검사 항목 | 결과 |
+| --- | --- |
+| 조사한 JSON | 671,745 |
+| 엄격 파서 통과 프레임 | 529,700 |
+| JSON 문법 정상 | 671,744 |
+| JSON 문법 오류 | 1 |
+| confidence [0,1] 위반 프레임 | 142,044 |
+| 엄격 파서 기준 모든 프레임 통과 영상 | 446 |
+| 엄격 파서 통과 프레임의 관절 형상 | 모두 (25,70,21,21) |
+| 통과 프레임의 confidence=0 관절 | 4,749,826 / 72,568,900 (약 6.5453%) |
+| 영상 ID와 형태소 매핑 | 2,000 / 2,000 |
+| 키포인트의 라벨 누락 / 라벨의 키포인트 누락 | 0 / 0 |
+| 검증된 실제 데이터 변환 성공 | 0 |
+| source 명세 부재로 변환 차단 | 2,000 영상 |
+
+별도 전체 구조 조사에서 문법 정상 671,744개 모두 (25,70,21,21)이었다.
+최상위 필드는 version/people 각 671,744개, camparam 585,816개이며 그 밖의 필드는 없었다.
+people 필드도 person_id와 위 2d/3d 배열뿐이어서 FPS, timestamp, 이미지 크기 필드가 없다.
+camparam 하위에 비어 있지 않은 값은 0개였다. 문법 오류 파일1개는 필드를 조사할 수 없었다.
+confidence 범위 위반이 있는 프레임은 body534, face120,410, 왼손15,312, 오른손11,545개다.
+그룹 간 중복이 있으므로 이를 합산해 프레임 수로 해석하지 않는다.
+범위 위반 confidence 값은 음수37,795개, 1 초과172,851개였다.
+JSON 문법 오류와 이러한 품질 오류는 ZIP CRC 오류와 별도로 집계한다.
+
+confidence 위반은 공식 명세에 따른 엄격 품질 판정이다. clip하거나 정답으로 자동
+수정하지 않는다. 파서 오류는 프레임별 첫 오류 코드이며 하나의 프레임에 여러 문제가
+있을 때 모든 문제를 중복 집계한 값은 아니다. 정상 JSON 문법 수와 엄격 파서 통과 수는
+구분한다. valid_sequences는 모든 JSON이 엄격 파서를 통과했다는 뜻이며 프레임 번호
+누락, 실제 영상 내용, 학습 적합성까지 보증하지 않는다.
+
+confidence=0 비율은 검출 실패 후보 비율이다. 기준 confidence 0.5 미만까지 포함한
+최종 mask 결측률과는 다르다. source 명세가 확보되면 실제 mask를 생성해 평가한다.
+좌표에는 음수와 1을 넘는 값이 관찰되어 canvas 확인 전 범위 오류 여부를 확정하지 않는다.
+PR #12 파서를 메모리에 불러 재사용했고 정답 불일치 3그룹을 그대로 유지했다.
+
+### 관절 대응과 공통 표현
+
+기존 landmarks.py는 pose 11점 `[0,2,5,7,8,11,12,13,14,15,16]`, 왼손 21점,
+오른손 21점의 순서다. process_frame은 fit_16x9 padding 후 정규화한다.
+pose 관측 기준은 visibility>=0.5이고 손은 검출 성공 시 전체 관절을 관측으로 표시한다.
+face33은 별도 배열이며 기본53에 포함되지 않는다. full 추출의 t는 원본 프레임 시각이다.
+AI-Hub의 confidence와 MediaPipe visibility가 통계적으로 같은 척도라는 가정은 적용하지 않는다.
+
+공통 표현은 BODY_25/Hand21 의미가 확인된 입력을 위한 `(T,51,2)` xy와 `(T,51)`
+bool mask, 실제 timestamps, 원본 frame_indices, private video_id다.
+
+| 공통 인덱스 | 의미 | BODY_25 인덱스 | 기존53 슬롯 |
+| --- | --- | --- | --- |
+| 0 | 코 | 0 | 0 |
+| 1,2 | 왼귀, 오른귀 | 18,17 | 3,4 |
+| 3,4 | 왼어깨, 오른어깨 | 5,2 | 5,6 |
+| 5,6 | 왼팔꿈치, 오른팔꿈치 | 6,3 | 7,8 |
+| 7,8 | 왼손목, 오른손목 | 7,4 | 9,10 |
+| 9–29 | 왼손 wrist 및 손가락 21점 | hand_left 0–20 | 11–31 |
+| 30–50 | 오른손 wrist 및 손가락 21점 | hand_right 0–20 | 32–52 |
+
+공통 손 순서는 wrist, thumb 4점, index 4점, middle 4점, ring 4점, pinky 4점이다.
+MediaPipe pose 2/5는 눈 안쪽 점이며 OpenPose eye 중심과 동일한 위치로 대입하지 않는다.
+얼굴70, neck, 하체 등 공통51에 없는 관절은 출력에서 제외한다. anatomical 명칭을
+대응시켜도 두 검출기 사이의 실제 위치 오차·분포 차이는 영상으로 평가해야 한다.
+[MediaPipe Pose](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker),
+[MediaPipe Hand](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
+
+기존 #16은 53슬롯을 요구한다. `to_ctc53`은 기본적으로 inner_eyes_unavailable로
+차단한다. `allow_missing_inner_eyes=True`를 선택하면 슬롯1/2를 mask=False와 0 sentinel로
+기록한다. 이 값은 관측 좌표로 사용되지 않는다. 이 정책을 채택하면 #16/#17 코드를
+수정하지 않고 연결할 수 있다. common51을 직접 학습하려면 #16의 고정53 형상 검사,
+어깨 인덱스와 feature 폭, 모델 input_size·체크포인트 계약의 후속 변경이 필요하다.
+
+### API 및 연결 방법
+
+- `parse_keypoint_json`은 실제 스키마의 배열과 confidence·형상·수치를 검증한다.
+- `CrowdKeypointArchive`는 ZIP 제한, 파일명·프레임 ID, CRC와 순차 읽기를 제공한다.
+- `iter_frame_results`는 오류를 고정 코드로 반환해 다음 파일 검사를 계속한다.
+- `SourceSpec`, `conversion_blockers`는 명세 누락을 명시적으로 차단한다.
+- `adapt_crowd_sequence`는 확인된 source로 common51 좌표·mask·시간축을 생성한다.
+- `adapt_mediapipe53`은 기존 정규화 좌표에서 동일한 common51을 선택한다.
+- `adapt_labeled_sequence`는 #12 제공 exact-video label_lookup을 받아 private text와 연결한다.
+- `audit_archive`는 전체 검증과 label ID coverage를 비식별 집계한다.
+
+source.coordinates는 pixels_top_left 또는 normalized_top_left를 지원하며 x는 오른쪽,
+y는 아래쪽이다. image_size는 그 좌표 canvas의 실제 width,height다. fit_16x9와 같은
+round·정수 padding 규칙을 적용한다. 이미 반전된 영상이나 image-left/right 필드는
+handedness_unverified로 차단한다. 손을 자동 교환하지 않는다.
+
+confidence>0이며 threshold 이상인 관절만 mask=True다. 좌표0 자체는 결측이 아니다.
+관측된 좌표가 명시한 canvas를 벗어나면 차단한다. 빈 그룹은 관측을 생성하지 않는다.
+전체 결측 시퀀스도 진단용으로 표현할 수 있으며 #16의 학습 sample 정책에서 제외해야 한다.
+빈 시퀀스, NaN/Inf, 자료형·shape 오류를 거부하고 원본 배열을 수정하지 않는다.
+
+fps 또는 timestamps를 반드시 받는다. FPS를 지정하면 frame_index/fps로 시간을 만들며
+번호가 건너뛴 구간의 경과 시간을 보존한다. timestamps를 제공하면 실제 시각을 우선한다.
+자동 15fps resampling과 보간은 적용하지 않으며 #16의 시계열 전처리와 연결한다.
+명시한 expected_frame_count가 파일 수와 다르면 차단한다.
+
+#12/#16/#17의 미병합 코드를 복사하거나 런타임 의존성으로 추가하지 않았다.
+label_lookup은 #12의 검증된 records에서 video_id로 조회하도록 호출자가 제공한다.
+FS만으로 join하지 않는다. `to_ctc53`의 xy/mask/timestamps를 #16에 전달한 뒤
+#16의 feature와 batch를 #17의 float32 [B,T,F], input_lengths 계약에 연결한다.
+
+### 실행 및 안전 한계
+
+```powershell
+$taskPython = 'D:\UNIVERSITY\DOWNLOAD\MINI_CONDA\REAL_MINICONDA\envs\sign-language\python.exe'
+& $taskPython tools/audit_crowd_keypoints.py '<실제 키포인트 ZIP 경로>' --inventory-root '<crowd 루트>'
+& $taskPython -m pytest -q tests/test_crowd_keypoints.py tests/test_crowd_keypoint_adapter.py tests/test_audit_crowd_keypoints.py tests/test_crowd_dataset_validation.py
+& $taskPython -u -c "import torch,pytest; torch.set_num_threads(2); raise SystemExit(pytest.main(['-q']))"
+```
+
+sign-language Conda 환경의 Python 3.12.16, NumPy 1.26.4를 사용한다.
+JSON당 65,536 bytes, 전체 8GiB, 1,000,000 member, 압축률100 제한을 기본 적용한다.
+ZIP 중앙 목록은 zipfile이 먼저 메모리에 올리므로 해당 할당까지 제한하지 못한다.
+중첩 ZIP과 스키마가 다른 경로는 member_name으로 거부한다. payload를 디스크에 추출하거나
+실제 좌표·정답·ID를 저장하지 않는다. audit CLI는 파서·목록·파일 오류를 고정 코드로 출력한다.
+
+### 남은 확인 사항
+
+source canvas 크기, export 좌표계, 실제 관절 명세·handedness와 파일별 시간 근거가 필요하다.
+공식 데이터셋의 30fps 설명을 개별 파일의 FPS 증거로 자동 대입하지 않았다.
+JSON confidence 이상 처리 정책과 53슬롯의 구조적 눈 결측 학습 정책은 팀 검토가 필요하다.
+공식 수행자 분리, 실제 영상-라벨 내용 대조, 실데이터 학습과 CER는 후속 작업이다.
+Refs #2 범위의 파서·조건부 어댑터·검증 PR로 제출할 수 있다.
+
+### Commit 2 최종 테스트 및 독립 리뷰
+
+신규 테스트는 55개이며 Commit 1 목록 검사20개와 기존 회귀27개를 포함해
+**102 passed, 2 warnings, 62 subtests passed**였다. 전체 실행 시간은 94.92초였다.
+경고2개는 기존 google._upb의 Python 확장 타입 deprecation 경고다.
+실데이터 검증은 ZIP 전체 읽기와 별도 구조 조사로 수행했으며 합성 변환 테스트와 구분했다.
+
+별도 리뷰 에이전트가 all-missing 통계의 Infinity 직렬화, mixed boolean 시간/프레임 입력,
+감사 CLI의 파일·목록 오류 처리, 극단 FPS overflow를 재현했다. 모두 수정하고 회귀 테스트를
+추가했으며 재리뷰에서 잔여 필수 수정 결함은 발견되지 않았다. 사람의 리뷰는 미실행이다.
+
+GitHub에서 Issue #2 및 PR #11/#12/#13/#15/#16/#17의 변경 파일 목록을 재확인했다.
+신규 파일의 경로 중복은 없으며 Commit 1 코드와 기존 팀원 파일은 보존했다.
+현재 main에 선행 PR들이 반영되지 않아 실제 CTC 통합은 인터페이스 수준으로 검증했다.
+새 브랜치 생성, Commit, Push, PR 생성, Merge는 수행하지 않았다.
+
+### Commit 2 변경 파일 및 함수 위치
+
+아래 경로는 저장소 루트 D:/UNIVERSITY/UAI_project2/FILE2/sign-language-recognition 기준이다.
+
+| 파일 | 변경 행 |
+| --- | --- |
+| src/fingerspelling/crowd_keypoints.py | 1–217 (신규) |
+| src/fingerspelling/crowd_keypoint_adapter.py | 1–263 (신규) |
+| tools/audit_crowd_keypoints.py | 1–115 (신규) |
+| tests/test_crowd_keypoints.py | 1–218 (신규) |
+| tests/test_crowd_keypoint_adapter.py | 1–226 (신규) |
+| tests/test_audit_crowd_keypoints.py | 1–90 (신규) |
+| docs/fingerspelling_crowd_keypoints.md | 1–237 (Commit 2 추가), 전체 1–400 |
+| docs/fingerspelling_crowd_keypoints_pr.md | 1–120 (시작 시 미추적 초안 갱신) |
+
+| 모듈 | 공개 함수·클래스 | 실제 행 |
+| --- | --- | --- |
+| src/fingerspelling/crowd_keypoints.py | KeypointError | 26–27 |
+| src/fingerspelling/crowd_keypoints.py | KeypointFrame | 44–49 |
+| src/fingerspelling/crowd_keypoints.py | parse_keypoint_json | 52–101 |
+| src/fingerspelling/crowd_keypoints.py | SequenceIndex | 105–116 |
+| src/fingerspelling/crowd_keypoints.py | CrowdKeypointArchive | 119–217 |
+| src/fingerspelling/crowd_keypoint_adapter.py | SourceSpec | 23–35 |
+| src/fingerspelling/crowd_keypoint_adapter.py | conversion_blockers | 38–57 |
+| src/fingerspelling/crowd_keypoint_adapter.py | CommonLandmarks | 112–117 |
+| src/fingerspelling/crowd_keypoint_adapter.py | adapt_crowd_sequence | 134–206 |
+| src/fingerspelling/crowd_keypoint_adapter.py | adapt_mediapipe53 | 209–229 |
+| src/fingerspelling/crowd_keypoint_adapter.py | to_ctc53 | 232–247 |
+| src/fingerspelling/crowd_keypoint_adapter.py | adapt_labeled_sequence | 250–263 |
+| tools/audit_crowd_keypoints.py | file_digest | 21–26 |
+| tools/audit_crowd_keypoints.py | audit_archive | 29–96 |
+| tools/audit_crowd_keypoints.py | main | 99–111 |
+
+## Commit 1 기록
+
 # CROWD 키포인트 확보 현황 및 CTC 입력 가능성
 
 확인일: 2026-11-13 (Asia/Seoul). 브랜치: `feat/2-crowd-keypoint-adapter`.
