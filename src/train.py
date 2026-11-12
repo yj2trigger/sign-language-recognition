@@ -35,6 +35,19 @@ def git_state():
         return "알 수 없음"
 
 
+AUX_SIZES = (10, 10, 10, 10, 3, 2)                 # 숫자 자릿값: 천·백·십·일, 단위(없음·만·억), 아래 묶음 유무
+AUX_DIM = sum(AUX_SIZES)
+
+
+def aux_loss(logits, tgt):
+    """logits (B, AUX_DIM), tgt (B, 6) 정수, 숫자 아닌 표본은 -1. 숫자 표본만으로 6개 CE 의 평균. 숫자 표본이 없으면 0."""
+    keep = tgt[:, 0] >= 0
+    if not keep.any():
+        return logits.sum() * 0
+    parts = torch.split(logits[keep], AUX_SIZES, dim=1)
+    return sum(nn.functional.cross_entropy(p, tgt[keep, i]) for i, p in enumerate(parts)) / len(parts)
+
+
 def predict(model, X):
     model.eval()
     with torch.no_grad():
@@ -49,14 +62,21 @@ def metrics(logits, y):
     return out
 
 
-def train_one(name, bank, va, classes, cfg, seed):
-    """bank = (Xb (k, N, T, F), y (N,)) 미리 만든 증강본, va = (X, y). 검증 macro-F1 이 가장 좋았던 가중치를 돌려준다."""
+def train_one(name, bank, va, classes, cfg, seed, num_tgt=None):
+    """bank = (Xb (k, N, T, F), y (N,)) 미리 만든 증강본, va = (X, y). 검증 macro-F1 이 가장 좋았던 가중치를 돌려준다.
+    num_tgt (클래스 수, 6) 을 주면 숫자 자릿값 보조 헤드를 붙여 CE + num_aux * 보조 손실로 학습한다.
+    보조 헤드는 학습에만 쓰고 저장하지 않는다(저장 모델·추론 코드는 그대로)."""
     Xb, y = bank
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
     n_feat = Xb.shape[3]
     model = models.build(name, n_feat, len(classes))
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["wd"])
+    params = list(model.parameters())
+    if num_tgt is not None:
+        aux = nn.Sequential(nn.Dropout(0.3), nn.Linear(model.head[1].in_features, AUX_DIM))
+        params += list(aux.parameters())
+        num_tgt = torch.from_numpy(num_tgt)
+    opt = torch.optim.AdamW(params, lr=cfg["lr"], weight_decay=cfg["wd"])
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg["epochs"])
     loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
     best, best_state, bad, hist = -1.0, None, 0, []
@@ -69,7 +89,14 @@ def train_one(name, bank, va, classes, cfg, seed):
             if len(b) < 2:                                    # BatchNorm 은 표본 1개 배치를 못 받는다
                 continue
             opt.zero_grad()
-            loss_fn(model(torch.from_numpy(X[b]).float()), torch.from_numpy(y[b])).backward()
+            xb, yb = torch.from_numpy(X[b]).float(), torch.from_numpy(y[b])
+            if num_tgt is None:
+                loss = loss_fn(model(xb), yb)
+            else:
+                aux.train()
+                f = model.features(xb)
+                loss = loss_fn(model.head(f), yb) + cfg["num_aux"] * aux_loss(aux(f), num_tgt[yb])
+            loss.backward()
             opt.step()
         sched.step()
         if va is None:                                    # 최종 모델: 검증 수행자 없이 정한 에폭까지 학습
@@ -115,6 +142,8 @@ def main():
     ap.add_argument("--no-aug", action="store_true", help="증강 없이 원래 학습 클립만 쓴다(증강 효과 비교용)")
     ap.add_argument("--bank-fp16", action="store_true", help="증강본을 float16 으로 저장(메모리 절반). 배치마다 float32 로 바꿔 학습")
     ap.add_argument("--exclude", default="", help="뺄 클립 목록 json(tools/check_mislabels.py 출력의 exclude)")
+    ap.add_argument("--num-aux", type=float, default=0.0, help="숫자 자릿값 보조 손실 가중치 λ(0 = 끔, TCN 만). --num-labels 필요")
+    ap.add_argument("--num-labels", default="", help="tools/number_labels.py 출력 json(레포 밖 D:)")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--save-models", default="", help="학습한 가중치(.pt)를 저장할 폴더. 데이터 파생물이라 레포 밖(D:)에 둔다")
     ap.add_argument("--final", type=int, default=0,
@@ -141,6 +170,18 @@ def main():
         with open(a.exclude, encoding="utf-8") as f:
             exclude = sorted(json.load(f)["exclude"])
         cfg["exclude_sha"], cfg["n_exclude"] = ds.sha(exclude), len(exclude)
+    num_tgt = None
+    if a.num_aux:                                 # 끈 상태의 cfg 는 예전 실험과 같게 둔다
+        if not a.num_labels or set(a.models.split(",")) != {"tcn"}:
+            raise SystemExit("--num-aux 는 --num-labels 와 함께, --models tcn 으로만 쓴다")
+        with open(a.num_labels, encoding="utf-8") as f:
+            labels = json.load(f)["labels"]
+        num_tgt = np.full((len(classes), 6), -1, np.int64)
+        for k, c in enumerate(classes):
+            if str(c) in labels:
+                num_tgt[k] = labels[str(c)]
+        cfg["num_aux"], cfg["num_labels_sha"], cfg["n_num"] = a.num_aux, ds.sha(labels), int((num_tgt[:, 0] >= 0).sum())
+        print("숫자 보조 학습: λ %.2f, 숫자 클래스 %d개" % (a.num_aux, cfg["n_num"]), flush=True)
     clips = ds.load_clips(a.features, classes, exclude)
     # 선정한 단어를 거의 다 수행한 수행자만 쓴다(일부만 받은 수행자가 시험 집합을 흔들지 않게)
     per = {}
@@ -160,7 +201,7 @@ def main():
         for name in a.models.split(","):
             for seed in (int(s) for s in a.seeds.split(",")):
                 t = time.time()
-                model, _, _ = train_one(name, bank, None, classes, cfg, seed)
+                model, _, _ = train_one(name, bank, None, classes, cfg, seed, num_tgt)
                 pt = os.path.join(a.save_models, "final-%s-c%d-s%d.pt" % (name, len(classes), seed))
                 torch.save({"state": model.state_dict(), "model": name, "n_feat": int(bank[0].shape[3]), "classes": classes,
                             "config": cfg, "split": {"train": signers, "val": [], "test": []}, "git": git}, pt + ".tmp")
@@ -195,7 +236,7 @@ def main():
                     print("건너뜀(이미 있음):", path, flush=True)
                     continue
                 t = time.time()
-                model, best, hist = train_one(name, bank, va[:2], classes, cfg, seed)
+                model, best, hist = train_one(name, bank, va[:2], classes, cfg, seed, num_tgt)
                 logits = predict(model, te[0])
                 res = {"model": name, "fold": fi, "seed": seed, "params": models.n_params(model),
                        "val_macro_f1": best, "test": metrics(logits, te[1]),
