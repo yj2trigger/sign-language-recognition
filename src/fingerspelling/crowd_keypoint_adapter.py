@@ -1,7 +1,8 @@
 """Explicit geometry/timing adapters for the observed CROWD schema.
 
-The common layout has 51 anatomical points. MediaPipe inner-eye landmarks have
-no verified equivalent in BODY_25. No mapping uses those eye slots.
+The common layout has 51 anatomical points. Existing pose indices 2/5 mean
+LEFT_EYE/RIGHT_EYE. Their export-specific correspondence remains unverified.
+The common51 policy omits both eye slots.
 """
 from dataclasses import dataclass, field
 import math
@@ -232,9 +233,10 @@ def adapt_mediapipe53(xy, mask, *, timestamps, video_id="", frame_indices=None):
 def to_ctc53(common, *, allow_missing_inner_eyes=False):
     """Return xy/mask/timestamps for PR #16 under an explicit missing-eye policy.
 
-    Slots 1/2 are always unobserved zero sentinels. BODY_25 eye centers never
-    substitute for MediaPipe inner eyes. The caller must approve this training
-    policy before using the existing 53-slot preprocessing interface.
+    Slots 1/2 are always unobserved zero sentinels. They correspond to MediaPipe
+    LEFT_EYE/RIGHT_EYE (pose 2/5). The parameter/error names mentioning inner
+    eyes are retained for PR #18 API compatibility. No eye mapping is applied.
+    Training and inference must opt into this same missing-eye policy.
     """
     _check_common(common)
     if allow_missing_inner_eyes is not True:

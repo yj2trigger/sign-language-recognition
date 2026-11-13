@@ -118,7 +118,11 @@ bool mask, 실제 timestamps, 원본 frame_indices, private video_id다.
 | 30–50 | 오른손 wrist 및 손가락 21점 | hand_right 0–20 | 32–52 |
 
 공통 손 순서는 wrist, thumb 4점, index 4점, middle 4점, ring 4점, pinky 4점이다.
-MediaPipe pose 2/5는 눈 안쪽 점이며 OpenPose eye 중심과 동일한 위치로 대입하지 않는다.
+MediaPipe pose 2/5는 LEFT_EYE/RIGHT_EYE이며 눈 안쪽 점은 1/4다.
+2026-11-13 공식 v0.10.21 소스와 설치 enum을 대조해 이전 설명을 정정했다.
+이번 common51 정책은 두 눈을 제외하며 실제 CROWD 내보내기의 눈 대응은 미검증이다.
+`allow_missing_inner_eyes`와 오류 코드의 inner 표기는 기존 API 호환을 위해 보존한다.
+[MediaPipe PoseLandmark 정의](https://github.com/google-ai-edge/mediapipe/blob/v0.10.21/mediapipe/python/solutions/pose.py)
 얼굴70, neck, 하체 등 공통51에 없는 관절은 출력에서 제외한다. anatomical 명칭을
 대응시켜도 두 검출기 사이의 실제 위치 오차·분포 차이는 영상으로 평가해야 한다.
 [MediaPipe Pose](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker),
