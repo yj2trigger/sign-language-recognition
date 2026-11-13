@@ -12,7 +12,8 @@
 
 기존 팀원의 `landmarks.py`, `preprocess.py`, `realtime.py`는 수정하지 않았다.
 기존 개발 단계에서는 Commit하지 않았다. 후속 선택적 Commit 지시에 따라
-이번 문서와 필요한 코드·테스트만 커밋한다. Push·PR 생성·Merge·브랜치 이동은 하지 않는다.
+당시에는 이 문서와 필요한 코드·테스트만 Commit하고 Push하지 않았다.
+최신 사용자 지시는 현재 브랜치의 Commit·Push를 허용하며 PR 생성·Merge·브랜치 이동은 금지한다.
 
 ## 재사용한 코드
 
@@ -175,6 +176,10 @@ $crowd = 'D:\UNIVERSITY\UAI_project2\sign-language-data\fingerspelling\crowd'
 실제 처리·학습·평가의 완료 여부는 최종 실행 결과에 한정한다.
 라벨 의미·해부학적 좌우·수행자 독립 평가·실시간 성능은 미완료다.
 Issue #2의 모든 완료 조건을 충족한 것으로 처리하지 않는다.
+
+후속 성능 진단과 기본 동작을 유지하는 부분 조합 옵션은
+`docs/mediapipe_performance.md`, 팀원 A 호출·모델 확보 방법은
+`docs/fingerspelling_handoff.md`를 따른다. 아래 수치는 최초 실험의 기록이다.
 
 ## 최종 실제 실행 결과
 

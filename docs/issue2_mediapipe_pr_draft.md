@@ -30,7 +30,8 @@ Refs #2. 수행자 독립 평가와 영상·라벨 의미 검증이 남아 있�
 문서: `docs/mediapipe_fingerspelling.md`, 이 초안.
 
 기존 미추적 OpenPose 코드·문서·검토 라벨은 이 PR에 일괄 포함하지 않는다.
-아래 파일 목록의 21개만 경로를 명시해 선별 Commit한다. 기존 OpenPose 파일과
+최초 두 Commit의 21개와 후속 추가 7개, 총 28개 파일만 변경 범위에 포함한다.
+경로를 명시해 선별 Commit한다. 기존 OpenPose 파일과
 현재 실행에서 참조하지 않는 `ctc_batching.py`는 미추적 상태로 보존한다.
 원본 이름·영상·라벨·NPZ·체크포인트·개별 예측은 외부 D드라이브에 유지한다.
 `src/realtime.py` 등 팀원 코드와 단어 인식 동작은 변경하지 않았다.
@@ -49,7 +50,7 @@ Refs #2. 수행자 독립 평가와 영상·라벨 의미 검증이 남아 있�
 실제 64영상 시도 중 59개 특징 생성, Train 39 / Validation 12 / Test 8로
 RTX 5060에서 40epoch 학습했다. 자모 CER는 각각 0.809524 / 0.850000 / 0.873016,
 완전 일치율은 모두 0%다. Validation·Test 예측이 각각 한 종류에 머무르므로
-현재 체크포인트는 실사용 모델로 권장하지 않는다. 수행자 독립 결과도 아니다.
+당시 체크포인트는 실사용 모델로 권장하지 않는다. 수행자 독립 결과도 아니다.
 개발 단계 전체 회귀 342개, 신규 테스트 49개 통과. 독립 리뷰에서 특징·체크포인트·CER와
 CPU 재로딩 예측 일치를 확인했다. 기존 파일 34개와 학습 산출물 1,632개의 해시가 유지됐다.
 신규 합성 테스트에서 정상·한 손 결측·양손 미검출·NaN/Inf·극단 좌표·빈 입력,
@@ -113,9 +114,33 @@ Pop-Location
 
 `[feat/2-mediapipe-fingerspelling] feat: add MediaPipe CTC pipeline`
 
-Commit은 사용자 명시 허용 범위에서 수행한다. Push, PR 생성, Merge는 하지 않는다.
+최초 두 Commit은 당시 허용 범위에서 로컬에 기록했다. 최신 지시에 따라 현재 브랜치에서
+추가 성능 개선 Commit·Push를 수행하며, Force Push·PR 생성·Merge는 하지 않는다.
 
 ## 파일별 실제 변경과 줄 범위
+
+### 후속 성능 개선 및 팀원 A 전달
+
+- 기존 59개 특징을 읽기 전용으로 사용하고 동일 Train39/Val12/Test8을 유지했다.
+- dropout 제거, 학습률 변경, Train 전용 특징 표준화의 3후보를 각40epoch 비교했다.
+- 선택 후보의 자모 CER: Train0.583333 / Validation0.758333 / 기존 Test진단0.825397.
+- 원래 strict 한글 CER는 악화했고, 자모를 보존하는 opt-in resync를 Val로 비교했다.
+  resync 한글 CER: Train0.705036 / Val0.804348 / 기존 Test진단0.84, 완전 일치율0%.
+  Val 차이는 기존보다 오류1개/46글자 감소이며 Test 한글 CER는 개선되지 않았다.
+- 표준화를 기존 Linear에 합쳐 기존 424차원 입력과 체크포인트 로더를 유지했다.
+  기본 strict 렌더러와 기존 모델 경로는 자동 변경하지 않는다.
+- 체크포인트 선택 재개/메타데이터 복구와 RNG 보존을 보완하고,
+  전처리 원본 SHA 계약이 Windows 줄바꿈 변환으로 바뀌지 않도록 3파일만 LF로 고정했다.
+- 최종 전체 회귀371개 통과(2개 기존 경고,104.56초). 실제 CPU/GPU public 함수 예측 일치.
+- Commit 대상만 있는 독립 소스 폴더에서도 두 테스트 파일78개 통과(14.80초).
+- 기존 자료·별도 PR 파일35개는 보존했다. 새 브랜치·환경·패키지 설치는 없다.
+- 수행자 독립 CER·라벨 의미 검증·실사용 성능은 여전히 미완료다.
+  Test는 과거 개발에 관찰됐으며 새로운 독립 평가로 주장하지 않는다.
+
+추가 실행 명령과 모든 후보 결과는 `docs/mediapipe_performance.md`,
+호출 예제와 비공개 모델 확보·SHA 검증은 `docs/fingerspelling_handoff.md`에 기록했다.
+후보 추론 체크포인트는 private D 폴더에서 확보해야 하며 GitHub에 넣지 않는다.
+제3 Commit은 위 성능 진단·복구·옵션·문서에 필요한 파일만 포함한다.
 
 비교 기준은 개발 전 HEAD `1aac6a14a5a26e09a94d1080cccfd6b8ac542023`이다.
 아래 파일은 모두 새 파일이므로 변경 전에는 줄이 없고, 변경 후 범위는 파일 전체다.
@@ -125,8 +150,11 @@ Commit은 사용자 명시 허용 범위에서 수행한다. Push, PR 생성, Me
 
 | File | Before | After | Change |
 |---|---|---|---|
-| `docs/issue2_mediapipe_pr_draft.md` | absent | 1-148 | PR body, file scope, tests and line ranges |
-| `docs/mediapipe_fingerspelling.md` | absent | 1-339 | Environment, measured results, counts, limitations and reproduction |
+| `.gitattributes` | absent | 1-4 | Preserve LF for three hashed preprocessing sources |
+| `docs/fingerspelling_handoff.md` | absent | 1-76 | Team A interface and private checkpoint acquisition with SHA verification |
+| `docs/issue2_mediapipe_pr_draft.md` | absent | 1-180 | PR body, file scope, tests and line ranges |
+| `docs/mediapipe_fingerspelling.md` | absent | 1-344 | Environment, measured results, counts, limitations and reproduction |
+| `docs/mediapipe_performance.md` | absent | 1-166 | Measured experiments, limitations, integrity and reproduction |
 | `src/fingerspelling/__init__.py` | absent | 1-1 | Package initialization |
 | `src/fingerspelling/cer_metrics.py` | absent | 1-101 | Existing PR #15 CER and deterministic D/I/S |
 | `src/fingerspelling/ctc_checkpoint.py` | absent | 1-174 | Existing PR #17 atomic restricted-loader checkpoints |
@@ -136,13 +164,17 @@ Commit은 사용자 명시 허용 범위에서 수행한다. Push, PR 생성, Me
 | `src/fingerspelling/ctc_targets.py` | absent | 1-134 | Existing PR #13 target encoding and repeated-token length checks |
 | `src/fingerspelling/ctc_training.py` | absent | 1-191 | Existing PR #17 CTC loss, trainer and resume |
 | `src/fingerspelling/jamo.py` | absent | 1-104 | Existing PR #11 Hangul decomposition/composition |
-| `src/fingerspelling/provenance.md` | absent | 1-10 | Source revisions and exclusion of unused batching helper |
+| `src/fingerspelling/partial_compose.py` | absent | 1-87 | Reuse token-preserving grammar without dynamic Git dependency |
+| `src/fingerspelling/provenance.md` | absent | 1-16 | Source revisions and exclusion of unused batching helper |
 | `src/fingerspelling/sequence_features.py` | absent | 1-51 | Existing PR #16 424-channel features preserving time |
 | `src/fingerspelling/sequence_preprocessing.py` | absent | 1-102 | Existing PR #16 masks, bounded gaps and shoulder normalization |
 | `src/fingerspelling/sequence_validation.py` | absent | 1-99 | Existing PR #16 shape, finite coordinate and timing validation |
 | `src/fingerspelling/tokens.py` | absent | 1-47 | Existing PR #13 immutable vocabulary |
-| `src/fingerspelling_runtime.py` | absent | 1-94 | Shared features, cached reader and public read_fingerspelling interface |
+| `src/fingerspelling_runtime.py` | absent | 1-100 | Shared features, cached reader and public read_fingerspelling interface |
 | `src/fingerspelling_video.py` | absent | 1-58 | Decoded PTS checks and 15Hz-target frame selection |
 | `tests/test_mediapipe_fingerspelling.py` | absent | 1-310 | 51 synthetic contract, error, timing and recovery tests |
+| `tests/test_mediapipe_performance.py` | absent | 1-163 | 27 standardization, recovery, rendering and evaluation tests |
 | `tools/audit_mediapipe_ctc.py` | absent | 1-85 | Optional local archive/artifact/hash and feature audit |
+| `tools/compare_mediapipe_rendering.py` | absent | 1-57 | Validation-only rendering choice and cached prediction diagnostics |
+| `tools/experiment_mediapipe_performance.py` | absent | 1-282 | Train-only conditioning, bounded tuning, affine export and selection recovery |
 | `tools/run_mediapipe_ctc.py` | absent | 1-455 | Per-MP4 CRC extraction, recovery, grouping, GPU training and evaluation |
