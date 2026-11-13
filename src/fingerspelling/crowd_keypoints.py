@@ -50,6 +50,11 @@ class KeypointFrame:
 
 
 def parse_keypoint_json(raw, *, max_bytes=65_536):
+    """Strict training reader; diagnostic readers cannot relax this contract."""
+    return _parse_keypoint_json(raw, max_bytes=max_bytes, check_confidence=True)
+
+
+def _parse_keypoint_json(raw, *, max_bytes=65_536, check_confidence=True):
     """Parse x,y,confidence triples. Empty groups retain shape (0,3).
 
     The observed people value is one object. No person tracking or handedness,
@@ -86,7 +91,7 @@ def parse_keypoint_json(raw, *, max_bytes=65_536):
             raise KeypointError("coordinate_value") from None
         if not np.isfinite(points).all():
             raise KeypointError("nonfinite")
-        if ((points[:, 2] < 0) | (points[:, 2] > 1)).any():
+        if check_confidence and ((points[:, 2] < 0) | (points[:, 2] > 1)).any():
             raise KeypointError("confidence")
         points.setflags(write=False)
         arrays.append(points)
