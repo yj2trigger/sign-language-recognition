@@ -9,7 +9,7 @@ Base `feat/2-mp-keypoint-report` → Head `docs/2-mediapipe-pr-stack`. 기존 PR
 
 | 파일 | 변경 전후 실제 줄 | 변경 내용 |
 |---|---|---|
-| `docs/issue2_pr_stack.md` | -0,0 +1,123 | 해당 단계의 검증된 구현 또는 실제 측정·재현 문서 |
+| `docs/issue2_pr_stack.md` | -0,0 +1,125 | 해당 단계의 검증된 구현 또는 실제 측정·재현 문서 |
 | `docs/pr_split/01-2-mp-runtime.md` | -12,5 +12,5 | 해당 단계의 검증된 구현 또는 실제 측정·재현 문서 |
 | `docs/pr_split/16-2-mediapipe-pr-stack.md` | 신규 문서 전체 | PR 제목·의존성·실측 검증 기록 |
 

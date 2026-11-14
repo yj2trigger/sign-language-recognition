@@ -19,6 +19,7 @@
 | [#20](https://github.com/yj2trigger/sign-language-recognition/pull/20) | open, merged=False | `main` → `research/2-fingerspelling-training-integration` | 1 | 278 | 0 | #11~#19 분석 문서 |
 
 기존 PR별 실제 변경 파일은 다음과 같다.
+
 - #11 `src/fingerspelling/__init__.py`, `src/fingerspelling/jamo.py`, `tests/test_jamo.py`
 - #12 `.gitignore`, `README.md`, `docs/label_preparation.md`, `docs/label_preparation_validation.md`, `src/fingerspelling/__init__.py`, `src/fingerspelling/crowd_labels.py`, `src/label_preparation.py`, `tests/test_crowd_labels.py`, `tests/test_label_preparation.py`
 - #13 `docs/ctc_targets.md`, `src/fingerspelling/ctc_targets.py`, `src/fingerspelling/tokens.py`, `tests/test_ctc_targets.py`, `tests/test_fingerspelling_tokens.py`, `tools/audit_ctc_targets.py`
@@ -68,7 +69,7 @@ Git merge/rebase/reset으로 기존 Commit을 변경하지 않고 새 선형 Com
 | 미생성 | `feat/2-mp-expansion-report` | `feat/2-mp-review-drafts` | 3 | 303 | 0 | 499 passed | 원격 SHA 확인 기록 참조 |
 | 미생성 | `feat/2-mp-review-drafts` | `feat/2-mp-keypoint-experiment` | 3 | 346 | 0 | 513 passed | 원격 SHA 확인 기록 참조 |
 | 미생성 | `feat/2-mp-keypoint-experiment` | `feat/2-mp-keypoint-report` | 2 | 335 | 0 | 513 passed | 원격 SHA 확인 기록 참조 |
-| 미생성 | `feat/2-mp-keypoint-report` | `docs/2-mediapipe-pr-stack` | 3 | 147 | 5 | 513 passed | 원격 SHA 확인 기록 참조 |
+| 미생성 | `feat/2-mp-keypoint-report` | `docs/2-mediapipe-pr-stack` | 3 | 149 | 5 | 513 passed | 원격 SHA 확인 기록 참조 |
 
 새 PR마다 실제 Base와의 `git diff Base...Head --numstat`를 집계했다. 제안 브랜치는 모두 10파일/추가400줄 이하다.
 소스 함수 경계로 데이터 계약 API, 전처리 API, CLI 학습 실행을 단계화했고 각 단계 전체 테스트를 실행했다.
@@ -109,6 +110,7 @@ PR 생성 및 권장 검토·Merge 순서는 기존 PR의 의존성을 먼저 �
 각 실행 로그는 원래 D 저장소의 `.tmp-issue2/git-split/*-tests*.log`에 보존했다.
 첫 기준 실행에서 내가 만든 테스트 임시 폴더의 부모 경로 누락으로 14개 fixture 오류가 났다. 부모를 생성한 재실행은 통과했다.
 기존 원본 브랜치의 main 대비 40개 변경 경로가 최종 스택에서 Git blob 바이트까지 일치함을 확인했다.
+기존 확장 모델 checkpoint와 실제 Validation 샘플 1개를 원래 작업 트리와 최종 Worktree에서 CPU 추론해 출력 일치를 확인했다.
 추가된 기존 PR 테스트·문서와 각 PR 초안을 제외하면 원래 구현·설정의 동작 변경은 없다.
 원래 미추적 파일과 기존 143개 특징·체크포인트는 전후 SHA로 검사했다. 상세 목록은 `protection-before.json`, `equivalence.json`에 있다.
 원본 ZIP·학습 결과를 쓰는 전처리/학습 CLI는 실행하지 않았다. 회귀 테스트의 합성 모델 최적화만 테스트 폴더에서 실행됐다.
