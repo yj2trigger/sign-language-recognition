@@ -45,7 +45,15 @@ def write(path, value):
         json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    # Windows readers/indexers can briefly omit FILE_SHARE_DELETE.
+    # Do not change permissions or delete the old journal to work around it.
+    for attempt in range(8):
+        try:
+            os.replace(temporary,path)
+            break
+        except PermissionError:
+            if attempt==7:raise
+            time.sleep(min(.025*2**attempt,.25))
 
 
 def candidates(video_zip, label_zip):
@@ -113,13 +121,55 @@ def feature_ok(path, row):
 def source_config(args):
     import cv2
     import mediapipe
-    return dict(schema=feature_schema(), runner_sha256=digest(__file__), seed=args.seed,
+    result = dict(schema=feature_schema(), runner_sha256=digest(__file__), seed=args.seed,
                   max_videos=args.max_videos, video_path=str(args.videos),
                   video_size=args.videos.stat().st_size, video_mtime=args.videos.stat().st_mtime_ns,
                   labels_sha256=digest(args.labels), landmarks_sha256=digest(ROOT/'src/landmarks.py'),
                   video_extractor_sha256=digest(ROOT/'src/fingerspelling_video.py'),
                   mediapipe=mediapipe.__version__, opencv=cv2.__version__,
                   extraction=dict(complexity=0, clock='decoded_PTS', target_fps=15, mirror=False))
+    for name in ('selection_file','reuse_features','temp_root'):
+        value=getattr(args,name,None)
+        if value is not None:result[name]=str(Path(value).resolve())
+    if getattr(args,'selection_file',None):result['selection_sha256']=digest(args.selection_file)
+    result['minimum_quality']={name:getattr(args,name,0.) for name in ('min_hand_coverage','min_shoulder_coverage')}
+    return result
+
+
+def quality_check(mask,args):
+    if mask.ndim!=2 or mask.shape[1]!=53 or len(mask)<2 or mask.dtype!=np.bool_:
+        raise ValueError('invalid_quality_mask')
+    hands=float(mask[:,11:].mean())
+    shoulders=float((mask[:,5]&mask[:,6]).mean())
+    if hands<getattr(args,'min_hand_coverage',0.):raise ValueError('hand_coverage_below_minimum')
+    if shoulders<getattr(args,'min_shoulder_coverage',0.):raise ValueError('shoulder_coverage_below_minimum')
+    return hands,shoulders
+
+
+def reuse_feature(args,row,destination,config):
+    """Copy a verified PTS feature; never re-extract or modify its source."""
+    previous=getattr(args,'reuse_features',None)
+    if previous is None:return None
+    previous=Path(previous);state=read(previous/'progress.json');vid=row['video_id']
+    old=state['completed'].get(vid)
+    if old is None:return None
+    for key in ('schema','video_size','video_mtime','labels_sha256','landmarks_sha256',
+                'video_extractor_sha256','mediapipe','opencv','extraction'):
+        if state['config'].get(key)!=config.get(key):raise ValueError('reuse_source_contract_changed')
+    source_row=next(r for r in state['selected'] if r['video_id']==vid)
+    for key in ('target_ids','text','start','end','crc','member'):
+        if source_row[key]!=row[key]:raise ValueError('reuse_label_or_member_changed')
+    if not old.get('member_crc_checked'):raise ValueError('reuse_member_not_verified')
+    source=previous/'features'/(vid+'.npz')
+    if feature_ok(source,row)!=old['sha256']:raise ValueError('reuse_feature_changed')
+    with np.load(source,allow_pickle=False) as data:quality_check(data['mask'],args)
+    if not destination.exists():
+        temporary=destination.with_suffix('.npz.copy.tmp')
+        with source.open('rb') as stream,temporary.open('wb') as target:shutil.copyfileobj(stream,target)
+        if feature_ok(temporary,row)!=old['sha256']:raise ValueError('reuse_copy_mismatch')
+        os.replace(temporary,destination)
+    elif feature_ok(destination,row)!=old['sha256']:raise ValueError('reuse_destination_changed')
+    return dict(old,path=str(destination),seconds=0.,reused_verified_features=True,reused_from=str(source))
 
 
 def checked_temporary(path, row):
@@ -153,13 +203,18 @@ def prepare(args):
         rank = {g: i for i, g in enumerate(groups)}
         rows.sort(key=lambda r: (rank[r['fs_id']], r['video_id']))
         chosen = rows[:args.max_videos]
+        if getattr(args,'selection_file',None):
+            selection=read(args.selection_file)['video_ids'];lookup={r['video_id']:r for r in rows}
+            if len(selection)!=len(set(selection)) or len(selection)>args.max_videos or any(v not in lookup for v in selection):
+                raise ValueError('invalid_explicit_selection')
+            chosen=[lookup[v] for v in selection]
         state = dict(config=config, zip_inventory_complete=True, whole_zip_crc_checked=False,
             candidate_videos=nvideos, label_jsons=nlabels, eligible_pairs=len(rows), exclusions=rejected,
             selected=chosen, completed={}, failed={}, stages=dict(zip_inventory=True, matching=True))
         write(state_path, state)
     started = time.perf_counter()
-    temp_dir = out / 'temp'
-    temp_dir.mkdir(exist_ok=True)
+    temp_dir = Path(getattr(args,'temp_root',None) or out/'temp')
+    temp_dir.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(args.videos) as archive:
         for row in state['selected']:
             vid = row['video_id']
@@ -167,12 +222,17 @@ def prepare(args):
             if vid in state['completed']:
                 if feature_ok(path, row) != state['completed'][vid]['sha256']:
                     raise ValueError('completed_feature_changed')
-                old_temp=out/'temp'/(vid+'.mp4')
+                old_temp=temp_dir/(vid+'.mp4')
                 owner=old_temp.with_suffix('.owner.json')
                 if old_temp.exists() and owner.exists() and read(owner)==dict(member=row['member'],crc=row['crc'],bytes=row['bytes']):
                     checked_temporary(old_temp,row)
                     old_temp.unlink()
                     owner.unlink()
+                continue
+            reused=reuse_feature(args,row,path,config)
+            if reused is not None:
+                state['completed'][vid]=reused;state['failed'].pop(vid,None)
+                write(state_path,state)
                 continue
             if time.perf_counter() - started > args.extraction_seconds:
                 state['budget_stop'] = True
@@ -233,6 +293,7 @@ def prepare(args):
                 keep = (clip['t'] >= row['start']) & (clip['t'] < row['end'])
                 xy, mask, times = clip['xy'][keep], clip['mask'][keep], clip['t'][keep]
                 values = features(xy, mask)
+                quality_check(mask,args)
                 target = TargetEncoder(vocabulary()).encode(row['text'], input_length=len(values))
                 if path.exists():
                     # Orphan file after interrupted state write: verify before adopting.
@@ -427,9 +488,18 @@ def main():
     parser.add_argument('--extraction-seconds',type=float,default=900)
     parser.add_argument('--epochs',type=int,default=40)
     parser.add_argument('--seed',type=int,default=20261114)
+    parser.add_argument('--selection-file',type=Path)
+    parser.add_argument('--reuse-features',type=Path)
+    parser.add_argument('--temp-root',type=Path)
+    parser.add_argument('--min-hand-coverage',type=float,default=0.)
+    parser.add_argument('--min-shoulder-coverage',type=float,default=0.)
     args=parser.parse_args()
     if args.max_videos<10 or args.epochs<1 or not np.isfinite(args.extraction_seconds) or args.extraction_seconds<=0:
         parser.error('invalid execution budget')
+    if any(not np.isfinite(v) or not 0<=v<=1 for v in (args.min_hand_coverage,args.min_shoulder_coverage)):
+        parser.error('quality fractions must lie in [0,1]')
+    if args.temp_root is not None and args.temp_root.resolve().drive.upper()!='D:':
+        parser.error('temporary video path must be on D drive')
     args.output=args.output.resolve()
     if args.output.drive.upper()!='D:' or args.output==ROOT or ROOT in args.output.parents:
         parser.error('outputs must be outside repository on D drive')
