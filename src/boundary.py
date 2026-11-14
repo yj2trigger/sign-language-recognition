@@ -11,6 +11,9 @@
 특징은 지금과 바로 앞 프레임만 쓰는 FeatureExtractor 하나로 만든다. 학습(batch_features)과 실시간이 같은 코드를 지난다.
 torch 는 모델을 쓸 때만 필요하다(규칙·지표·로그 함수는 numpy 만 쓴다).
 """
+import datetime
+import os
+import re
 
 import numpy as np
 
@@ -223,3 +226,125 @@ def load_model(path):
     model = build_model(ck["arch"], ck["n_feat"])
     model.load_state_dict(ck["state"])
     return model.eval(), ck
+
+
+# ---- 검증: 문장 영상 단위의 경계 정확도와 지연 ----
+
+def run_stream(det, t, xy, mask, face=None, face_mask=None, flush=True):
+    """영상 하나를 탐지기에 프레임 순서대로 넣는다. 반환: [(알린 시각, 시작, 끝, 종류)]. flush 로 닫힌 것은 마지막 프레임 시각."""
+    det.reset()
+    ev = []
+    for i in range(len(t)):
+        r = det.update(t[i], xy[i], mask[i], None if face is None else face[i], None if face_mask is None else face_mask[i])
+        if r:
+            ev.append((float(t[i]),) + r)
+    if flush and len(t):
+        ev += [(float(t[-1]),) + r for r in det.flush()]
+    return ev
+
+
+def segments_to_frames(t, segments):
+    """구간 목록을 프레임별 활동 여부 (T,) bool 로."""
+    t = np.asarray(t, float)
+    act = np.zeros(len(t), bool)
+    for s, e, *_ in segments:
+        act |= (t >= s) & (t <= e)
+    return act
+
+
+def frame_f1(t, pred_segments, true_segments):
+    """프레임 단위 활동(구간 안/밖) 정밀도·재현율·F1."""
+    p, g = segments_to_frames(t, pred_segments), segments_to_frames(t, true_segments)
+    tp, fp, fn = int((p & g).sum()), int((p & ~g).sum()), int((~p & g).sum())
+    prec = tp / (tp + fp) if tp + fp else 0.0
+    rec = tp / (tp + fn) if tp + fn else 0.0
+    return {"precision": prec, "recall": rec, "f1": 2 * prec * rec / (prec + rec) if prec + rec else 0.0}
+
+
+def iou(a, b):
+    inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    union = max(a[1], b[1]) - min(a[0], b[0])
+    return inter / union if union > 0 else float(a[:2] == b[:2])
+
+
+def match_segments(pred, true, iou_thr=0.5):
+    """IoU 가 큰 쌍부터 1:1 로 맞춘다. 반환: [(예측 번호, 정답 번호, IoU)]."""
+    pairs = sorted(((iou(p, g), i, j) for i, p in enumerate(pred) for j, g in enumerate(true)), reverse=True)
+    used_p, used_g, out = set(), set(), []
+    for v, i, j in pairs:
+        if v < iou_thr:
+            break
+        if i not in used_p and j not in used_g:
+            used_p.add(i); used_g.add(j); out.append((i, j, v))
+    return out
+
+
+def segment_scores(pred, true, iou_thr=0.5):
+    """IoU ≥ iou_thr 를 맞힘으로 본 구간 정밀도·재현율·F1 과 맞힌 쌍의 평균 IoU."""
+    m = match_segments(pred, true, iou_thr)
+    prec = len(m) / len(pred) if pred else 0.0
+    rec = len(m) / len(true) if true else 0.0
+    return {"precision": prec, "recall": rec, "f1": 2 * prec * rec / (prec + rec) if prec + rec else 0.0,
+            "mean_iou": float(np.mean([v for *_, v in m])) if m else 0.0, "n_pred": len(pred), "n_true": len(true)}
+
+
+def evaluate_stream(events, t, true_segments, iou_thr=0.5):
+    """run_stream 결과 하나를 정답과 비교한다.
+
+    Returns:
+        dict: frame(F1 등), segment(IoU 기준 F1), latency_s(맞힌 단어마다 알린 시각 - 정답 끝),
+        sentence_end_latency_s(문장 끝을 알린 시각 - 정답 마지막 단어 끝, 못 알렸으면 None), n_sentence_end(알린 횟수).
+    """
+    words = [e for e in events if e[3] != "sentence_end"]
+    pred = [e[1:] for e in words]
+    m = match_segments(pred, true_segments, iou_thr)
+    sent = [e for e in events if e[3] == "sentence_end"]
+    true_end = max(e for _, e, *_ in true_segments) if true_segments else None
+    return {"frame": frame_f1(t, pred, true_segments), "segment": segment_scores(pred, true_segments, iou_thr),
+            "latency_s": [words[i][0] - true_segments[j][1] for i, j, _ in m],
+            "sentence_end_latency_s": sent[0][0] - true_end if sent and true_end is not None else None,
+            "n_sentence_end": len(sent)}
+
+
+def summarize(results):
+    """evaluate_stream 결과 여러 개를 합친다(프레임·구간 지표는 영상 평균, 지연은 전체 중앙값·p95)."""
+    lat = [x for r in results for x in r["latency_s"]]
+    slat = [r["sentence_end_latency_s"] for r in results if r["sentence_end_latency_s"] is not None]
+    mean = lambda f: float(np.mean([f(r) for r in results])) if results else 0.0
+    return {"n_videos": len(results),
+            "frame_f1": mean(lambda r: r["frame"]["f1"]),
+            "segment_f1": mean(lambda r: r["segment"]["f1"]),
+            "mean_iou": mean(lambda r: r["segment"]["mean_iou"]),
+            "latency_median_s": float(np.median(lat)) if lat else None,
+            "latency_p95_s": float(np.percentile(lat, 95)) if lat else None,
+            "sentence_end_rate": mean(lambda r: float(r["n_sentence_end"] == 1)),
+            "sentence_end_latency_median_s": float(np.median(slat)) if slat else None}
+
+
+# ---- 실험 기록: logs/sign-language/trials.md 에 T-번호 항목을 덧붙인다 ----
+
+def format_trial(tid, title, hypothesis, attempt, result, decision, date=None):
+    """실험 기록 한 항목(markdown). 단어명·문장 원문은 넣지 말 것(지표·설정만)."""
+    date = date or datetime.date.today().isoformat()
+    return "\n".join(["## %s %s (%s)" % (tid, title, date), "",
+                      "- 가설: " + hypothesis, "- 시도: " + attempt, "- 결과: " + result, "- 판단: " + decision, ""])
+
+
+def next_trial_id(text):
+    nums = [int(n) for n in re.findall(r"^## T-(\d+)", text, re.M)]
+    return "T-%03d" % (max(nums) + 1 if nums else 1)
+
+
+def append_trial(path, title, hypothesis, attempt, result, decision, date=None):
+    """path 에 다음 T-번호로 항목을 덧붙이고 그 번호를 돌려준다. 파일·폴더가 없으면 만든다."""
+    text = ""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    tid = next_trial_id(text)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        if text and not text.endswith("\n\n"):
+            f.write("\n" if text.endswith("\n") else "\n\n")
+        f.write(format_trial(tid, title, hypothesis, attempt, result, decision, date))
+    return tid

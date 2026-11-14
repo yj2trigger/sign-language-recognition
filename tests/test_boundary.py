@@ -98,5 +98,28 @@ def test_load_model_roundtrip_and_feature_check(tmp_path):
         bd.load_model(str(tmp_path / "old.pt"))
 
 
+# ---- 지표·기록 ----
+
+
+def test_metrics():
+    assert bd.iou((0, 2), (1, 3)) == pytest.approx(1 / 3)
+    sc = bd.segment_scores([(0, 1, "word"), (5, 6, "word")], [(0, 1.1), (2, 3)])
+    assert sc["precision"] == 0.5 and sc["recall"] == 0.5 and sc["mean_iou"] == pytest.approx(1 / 1.1)
+    t = np.arange(10) / 10
+    assert bd.frame_f1(t, [(0.2, 0.5)], [(0.2, 0.5)])["f1"] == 1.0
+    assert bd.frame_f1(t, [], [(0.2, 0.5)])["f1"] == 0.0
+    r = bd.evaluate_stream([(1.3, 0.0, 1.0, "word"), (2.5, 0.0, 1.0, "sentence_end")], t, [(0.0, 1.0, "word")])
+    assert r["latency_s"] == [pytest.approx(0.3)] and r["sentence_end_latency_s"] == pytest.approx(1.5)
+
+
+def test_append_trial_numbers_entries(tmp_path):
+    p = tmp_path / "logs" / "sign-language" / "trials.md"
+    assert bd.append_trial(str(p), "A", "h", "a", "r", "d", date="2026-11-11") == "T-001"
+    assert bd.append_trial(str(p), "B", "h", "a", "r", "d") == "T-002"
+    text = p.read_text(encoding="utf-8")
+    assert text.startswith("## T-001 A (2026-11-11)\n") and "\n## T-002 B" in text and "- 가설: h" in text
+    assert bd.next_trial_id("## T-041 x\n") == "T-042"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
