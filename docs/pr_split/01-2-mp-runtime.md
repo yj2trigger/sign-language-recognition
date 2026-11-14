@@ -9,11 +9,11 @@ Base `integration/2-existing-pr-baseline` → Head `feat/2-mp-runtime`. 기존 P
 
 | 파일 | 변경 전후 실제 줄 | 변경 내용 |
 |---|---|---|
-| `src/fingerspelling_runtime.py` | -0,0 +1,94 | 관련 기능 단계 반영 |
-| `src/fingerspelling_video.py` | -0,0 +1,58 | 관련 기능 단계 반영 |
-| `src/fingerspelling/__init__.py` | -0,0 +1,1 | 관련 기능 단계 반영 |
-| `tests/test_mediapipe_fingerspelling.py` | -173,3 +172,0 | 관련 기능 단계 반영 |
-| `.gitattributes` | -0,0 +1,5 | 관련 기능 단계 반영 |
+| `src/fingerspelling_runtime.py` | -0,0 +1,94 | 53점 특징·스키마 검증과 checkpoint 기반 공개 추론 |
+| `src/fingerspelling_video.py` | -0,0 +1,58 | 실제 디코딩 PTS 검사와 중복 없는 프레임 선택 |
+| `src/fingerspelling/__init__.py` | -1 +1 | 패키지 설명문을 기존 MediaPipe snapshot과 일치 |
+| `tests/test_mediapipe_fingerspelling.py` | -0,0 +1,172 | 해당 기능의 정상·경계·예외 회귀 |
+| `.gitattributes` | -0,0 +1,5 | 특징 소스 raw SHA를 위한 LF 고정 |
 | `docs/pr_split/01-2-mp-runtime.md` | 신규 문서 전체 | PR 제목·의존성·실측 검증 기록 |
 
 전체 회귀 `420 passed, 2 warnings, 254 subtests passed in 108.62s (0:01:48)`. 로그 `runtime-tests.log`.
