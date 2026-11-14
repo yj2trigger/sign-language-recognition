@@ -91,5 +91,18 @@ def test_other_drive_is_outside_repo():
     assert not db._inside_repo(other + r"\sign-language-data\bio")   # 예전에는 commonpath 가 ValueError 로 죽었다
 
 
+def test_load_real_sentences_reads_times_and_signer(tmp_path):
+    n = 30
+    common = dict(t=np.arange(n) / FPS, xy=np.zeros((n, 53, 2), np.float32), mask=np.zeros((n, 53), bool),
+                  face=np.zeros((n, 33, 2), np.float32), face_mask=np.zeros((n, 33), bool))
+    np.savez(tmp_path / "NIA_SL_SEN0001_REAL02_F.npz", seg=np.array([[0.5, 1.0], [1.2, 1.8]], np.float32), **common)
+    np.savez(tmp_path / "NIA_SL_SEN0002_REAL03_F.npz", seg=np.array([[0.5, 1.0]], np.float32), **common)
+    np.savez(tmp_path / "NIA_SL_SEN0003_REAL02_F.npz", seg=np.zeros((0, 2), np.float32), **common)   # 라벨 없는 문장은 뺀다
+    got = db.load_real_sentences([str(tmp_path)])
+    assert [(s["signer"], len(s["segments"])) for s in got] == [(2, 2), (3, 1)]
+    assert got[0]["segments"][1] == pytest.approx((1.2, 1.8, "word"))
+    assert [s["signer"] for s in db.load_real_sentences([str(tmp_path)], signers=[3])] == [3]
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
