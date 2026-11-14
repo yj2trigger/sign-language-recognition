@@ -1,5 +1,8 @@
 # Issue #2 성능 진단 및 제한된 개선 실험
 
+> 아래는 59개 데이터의 이전 실험 기록이다. 최신 실제 영상 143개 확장 및
+> 두 표현의 비교 결과는 [데이터 확장 보고서](mediapipe_data_expansion.md)를 따른다.
+
 2026-11-14, `feat/2-mediapipe-fingerspelling`에서 진행했다.
 새 브랜치·가상환경은 만들지 않았다. 모든 Python 명령은 기존 Conda
 `D:\UNIVERSITY\DOWNLOAD\MINI_CONDA\REAL_MINICONDA\envs\sign-language\python.exe`로 실행했다.
