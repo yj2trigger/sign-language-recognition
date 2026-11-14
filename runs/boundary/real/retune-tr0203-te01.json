@@ -1,0 +1,11 @@
+{
+ "model": "real-tcn-tr0203-te01-s0 (train_boundary.py --real-train 02 03 --real-test 01 --seed 0)",
+ "chosen_on": "validation sentences of signers 2,3 (seed 0 split, 196 sentences)",
+ "test": "signer 1, 1061 sentences; sentence_end_in_video_rate counts only alerts before the video ends (no flush)",
+ "before": {"begin_thr": 0.5, "max_pause_s": 1.6, "face_cue": true, "segment_f1": 0.815, "frame_f1": 0.891, "mean_iou": 0.745, "latency_median_s": 0.204, "latency_p95_s": 0.507, "sentence_end_in_video_rate": 0.765, "sentence_end_mid_false": 1, "sentence_end_latency_median_s": 0.849},
+ "after": {"begin_thr": 0.3, "max_pause_s": 1.2, "face_cue": false, "segment_f1": 0.844, "frame_f1": 0.890, "mean_iou": 0.768, "latency_median_s": 0.185, "latency_p95_s": 0.469, "sentence_end_in_video_rate": 0.943, "sentence_end_mid_false": 1, "sentence_end_latency_median_s": 0.827},
+ "validation_grid": {
+  "begin_thr": {"0.2": 0.904, "0.3": 0.913, "0.4": 0.907, "0.5": 0.901},
+  "sentence_end_in_video_rate": {"base(1.6, face on)": 0.597, "face_ref 0.03": 0.679, "face_ref 0.02": 0.730, "face off": 0.755, "max_pause 1.2": 0.750, "max_pause 1.2 + face off": 0.821}
+ }
+}
