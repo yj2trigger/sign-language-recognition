@@ -26,6 +26,13 @@ Issue의 원본 재배포 제한에 따라 실제 라벨, 예측 문자열, 좌�
 signer/performer/person/speaker/subject/participant/session/actor에 해당하는 필드는 없다.
 ZIP 디렉터리는 `CROWD/18`·`CROWD/19`에 각각 1,000개다.
 
+OpenPose 원본 키포인트 JSON도 별도로 확인했다. 영상 그룹마다 기존 프레임 하나씩
+총 2,000프레임을 읽었고 `people.person_id`는 모두 정수 `-1`이었다. 2D/3D 관절 필드도
+존재하지만 이 동일 값은 수행자를 구분할 수 없다. 이는 전체 671,745프레임의 ID 값
+분포를 전수 검사한 결과가 아니다. 형태소의 필드 부재와 키포인트의 미식별 값을 구분한다.
+참고로 [OpenPose 공식 출력 문서](https://cmu-perceptual-computing-lab.github.io/openpose/web/html/doc/md_doc_02_output.html)는
+JSON을 프레임별 검출 결과로 설명한다. 실제 CROWD 수행자 인증 매핑으로 사용하지 않았다.
+
 공식 소개는 CROWD 수집군의 언어제공자 21명을 설명하지만 개별 영상의 수행자 매핑은
 제공하지 않는다. [AI-Hub 103 공식 소개](https://aihub.or.kr/aihubdata/data/view.do?dataSetSn=103).
 로컬 공식 PDF는 찾지 못했다. 공개 링크의 존재 및 응답은 확인했으나 설명서·가이드
@@ -207,6 +214,7 @@ GIF의 누적 시간 보정과 저장 지연 전수 검증, 학습 재개용 체
 결과 루트는 원래 프로젝트의 `.tmp-issue2/final-validation/results`다.
 `signers-final.json`, `api-final.json`, `semantics-v2/semantics.json` 및 3 GIF,
 보호 manifests, 실제 PR 메타데이터를 보존한다. 원본 영상·라벨·좌표는 재배포하지 않는다.
+별도 키포인트 ID 표본 검사는 `keypoint-person-id.json`에 원문 필드명·값 분포·범위를 남겼다.
 출력 경로가 이미 존재하면 도구는 덮어쓰기 대신 거부한다.
 
 ```powershell

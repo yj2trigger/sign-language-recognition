@@ -14,6 +14,7 @@
 
 - 원본 형태소 2,000개와 실제 Train123/Val12/Test8, ZIP 경로, URL 패턴을 읽기 전용 조사한다.
   URL 후보를 사람으로 확정하지 않는다. 공식 수행자 매핑이 없어 독립 CER는 미측정이다.
+  추가로 그룹당 키포인트 1프레임씩 2,000개의 `person_id`가 모두 `-1`임을 확인했다.
 - 기존 블록의 3영상·384관측·18확인시점을 연속 분석하고 각도·거리·투영 정보를 기록한다.
   공식 교육 도판과 비교했지만 완전한 독립 전사가 없어 3개 모두 UNCERTAIN이다.
 - 기존 checkpoint와 실제 특징 3개에서 public CPU API 및 동일 CUDA reader를 호출한다.
@@ -31,8 +32,8 @@
 | `tools/validate_issue2_submission.py` | 없음 → 1–225 | 수행자 근거, 실제 API 계약 검사, 보호 해시 manifest |
 | `tools/inspect_issue2_semantics.py` | 없음 → 1–120 | 연속 관절·18시점 관찰, GIF 누적 시간 보정·재읽기 |
 | `tests/test_issue2_submission_validation.py` | 없음 → 1–116 | 후보 ID 오인 차단, 경계·극단·GIF·API 판정·CER 회귀 |
-| `docs/issue2_submission_validation.md` | 없음 → 1–223 | 실제 결과, 불가능한 평가 조건, 재현·통합 접점 |
-| `docs/issue2_submission_validation_pr.md` | 없음 → 1–74 | 이 PR 초안 |
+| `docs/issue2_submission_validation.md` | 없음 → 1–231 | 실제 결과, 불가능한 평가 조건, 재현·통합 접점 |
+| `docs/issue2_submission_validation_pr.md` | 없음 → 1–75 | 이 PR 초안 |
 
 ## Tests
 
