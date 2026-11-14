@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import boundary as bd
 import realtime as rt
 
 
@@ -25,6 +26,23 @@ def test_segmenter():
     pattern = [0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]   # 사이 1프레임 내림은 끊지 않는다, 1프레임 올림은 시작 아님
     hits = [(i, s) for i, up in enumerate(pattern) if (s := seg.update(i, *_pose(up)))]
     assert hits == [(12, (3, 8))], hits                      # 시작 = 올림 2번째(3), 끝 = 마지막 올림(8), 내림 4번째(12)에 확정
+
+
+def test_feed_segmenter_passes_face():
+    calls = []
+
+    class Fake:
+        def update(self, t, xy, mask, face=None, face_mask=None):
+            calls.append((t, face is not None, face_mask is not None))
+
+    xy, mask = _pose(True)
+    r = (xy, mask, None, (1920, 1080), np.zeros((33, 2), np.float32), np.ones(33, bool))   # process_frame(with_face=True) 모양
+    rt.feed_segmenter(Fake(), 0.5, r, with_face=True)
+    rt.feed_segmenter(rt.HandRaiseSegmenter(), 0.5, r[:4], with_face=False)    # 얼굴 인자가 없는 탐지기도 그대로 된다
+    assert calls == [(0.5, True, True)]
+    assert not getattr(rt.make_segmenter("rule"), "uses_face", False)        # 표정 단서는 기본으로 끈다
+    assert bd.BoundaryDetector(None, bd.DetectorConfig(face_cue=True)).uses_face
+    assert not getattr(rt.make_segmenter(""), "uses_face", False)
 
 
 def test_video_clock():
