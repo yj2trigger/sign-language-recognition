@@ -146,6 +146,8 @@ def run_candidate(args,name,dropout,lr,standardized,data,mean,scale):
         source_config_sha256=base.digest(args.source/'training-config.json'),
         implementation_sha256=base.digest(__file__),batch_size=8,
         selection='minimum_validation_CER_then_validation_loss_then_earlier_epoch')
+    input_schema=getattr(args,'input_schema',None) or feature_schema()
+    config['input_schema']=input_schema
     if (directory/'config.json').exists() and base.read(directory/'config.json')!=config:
         raise ValueError('candidate_configuration_changed')
     if (directory/'result.json').exists():
@@ -160,7 +162,7 @@ def run_candidate(args,name,dropout,lr,standardized,data,mean,scale):
     base.write(directory/'affine.json',dict(mean=mean.tolist(),scale=scale.tolist(),fit_split='train'))
     seed_everything(args.seed)
     model=FingerspellingCTC(CTCModelConfig(424,52,0,hidden_size=64,dropout=dropout))
-    schema=dict(feature_schema(),experiment_input_standardized=standardized)
+    schema=dict(input_schema,experiment_input_standardized=standardized)
     trainer=CTCTrainer(model,CTCTrainingConfig(seed=args.seed,learning_rate=lr),device='cuda:0',
         vocabulary=dict(token_ids=dict(vocabulary().token_ids),blank_id=0),feature_schema=schema)
     checkpoint=directory/'training';checkpoint.mkdir(exist_ok=True)
@@ -215,7 +217,7 @@ def run_candidate(args,name,dropout,lr,standardized,data,mean,scale):
             if not torch.allclose(a,b,atol=2e-4,rtol=2e-4) or not torch.equal(a.argmax(-1),b.argmax(-1)):
                 raise RuntimeError('affine_export_changed_predictions')
     deployment=copy.deepcopy(payload)
-    deployment.update(model_state={k:v.cpu() for k,v in folded.state_dict().items()},feature_schema=feature_schema(),
+    deployment.update(model_state={k:v.cpu() for k,v in folded.state_dict().items()},feature_schema=input_schema,
         optimizer_state={},deployment_only=True,affine_folded=True)
     deployment.pop('best_checkpoint',None)
     write_checkpoint(directory/'inference.pt',deployment)

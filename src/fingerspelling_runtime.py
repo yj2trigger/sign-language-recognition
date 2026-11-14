@@ -12,6 +12,7 @@ from fingerspelling.ctc_targets import TargetEncoder
 from fingerspelling.sequence_features import build_sequence_features
 from fingerspelling.sequence_validation import validate_sequence
 from fingerspelling.ctc_inference import CTCRecognizer
+from fingerspelling.ctc_checkpoint import load_checkpoint
 from fingerspelling.ctc_decode import greedy_decode
 
 
@@ -61,9 +62,15 @@ class FingerspellingReader:
         if render_mode not in ('strict','prefix','resync'):raise ValueError('invalid_render_mode')
         self.render_mode=render_mode
         vocab = vocabulary()
+        declared=load_checkpoint(checkpoint)['feature_schema']
+        expected=feature_schema();self.feature_transform=None
+        variant=declared.get('hand_local') if isinstance(declared,dict) else None
+        if isinstance(variant,dict) and variant.get('version')==1:
+            from fingerspelling_hand_features import hand_local_schema,hand_local_features
+            expected=hand_local_schema();self.feature_transform=hand_local_features
         self.recognizer = CTCRecognizer(checkpoint, device=device,
             expected_vocabulary=dict(token_ids=dict(vocab.token_ids), blank_id=0),
-            expected_feature_schema=feature_schema())
+            expected_feature_schema=expected)
         config = self.recognizer.model.config
         if config.input_size != 424 or config.num_classes != vocab.num_classes or config.blank_id != 0:
             raise ValueError('checkpoint_input_or_classes_mismatch')
@@ -77,6 +84,7 @@ class FingerspellingReader:
             return ''
         try:
             values = features(xy, mask)
+            if self.feature_transform is not None:values=self.feature_transform(values)
         except ValueError as exc:
             if str(exc) == 'no_usable_hands':
                 return ''
