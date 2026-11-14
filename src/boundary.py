@@ -12,8 +12,11 @@
 torch 는 모델을 쓸 때만 필요하다(규칙·지표·로그 함수는 numpy 만 쓴다).
 """
 import datetime
+import math
 import os
 import re
+from collections import deque
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -226,6 +229,232 @@ def load_model(path):
     model = build_model(ck["arch"], ck["n_feat"])
     model.load_state_dict(ck["state"])
     return model.eval(), ck
+
+
+# ---- 실시간 탐지기 ----
+
+@dataclass
+class DetectorConfig:
+    fps: float = 15.0
+    window: int = 61               # 모델에 넣는 최근 프레임 수. 학습과 맞춘 값은 model_window(), .pt 에 저장된다
+    on_frames: int = 2             # 활동이 이만큼 이어지면 구간 시작
+    off_frames: int = 4            # 비활동이 이만큼 이어지면 구간 끝(15fps 약 0.27초). 손이 잠깐 안 잡혀도 끊지 않는다
+    act_thr: float = 0.5           # 모델: P(B)+P(I) 가 이 이상이면 활동
+    begin_thr: float = 0.3         # 모델: 구간 중 P(B) 가 이 이상이면 앞 단어를 닫고 새 단어 시작(실제 문장 검증에서 고름)
+    move_speed: float = 0.6        # 규칙: 손끝 속도(어깨너비/초)가 이보다 빠르면 활동
+    hold_speed: float = 0.5        # 규칙: 손을 든 채 이보다 느리면 '멈춤'(손목 속도와 손가락 속도 둘 다)
+    word_pause_s: float = 0.25     # 규칙: 멈춤이 이만큼 이어지면 단어 끝
+    min_seg_s: float = 0.2         # 이보다 짧은 구간은 버린다(잡음)
+    pause_s: float = 0.8           # 문장 끝: 마지막 단어 뒤 멈춤이 최소 이만큼 이어져야 한다
+    max_pause_s: float = 1.2       # 문장 끝: 멈춤이 이만큼이면 다른 단서와 무관하게 문장 끝(실제 문장 검증에서 고름)
+    cue_thr: float = 0.5           # 문장 끝: pause_s~max_pause_s 사이에서는 단서 점수가 이 이상일 때 끝
+    len_ratio: float = 1.3         # 마지막 단어가 앞 단어 중앙값의 이 배 이상이면 길이 단서 1(같으면 0.5)
+    face_cue: bool = False         # 표정 단서를 쓸지. 실제 문장 검증에서 켜면 문장 끝을 더 놓쳐 기본은 끈다
+    face_ref: float = 0.06         # 눈썹·입 변화(얼굴 높이 단위)가 이만큼이면 표정 단서 1
+    face_tail_s: float = 0.5       # 마지막 단어 끝 이 초 전부터의 표정을 문장 평균과 비교
+    fs_min_s: float = 0.6          # 지문자: 이 이상 길고
+    fs_ratio: float = 2.0          #   손가락 움직임 / 손목 움직임이 이 배 이상이면 지문자
+
+
+class BoundaryDetector:
+    """프레임을 하나씩 받아 단어·지문자 구간과 문장 끝을 알린다.
+
+    Args:
+        model (str | torch.nn.Module | None): .pt 경로, 이미 만든 모델, 또는 None(규칙 모드).
+        config (DetectorConfig | None): 문턱값. None 이면 기본값(모델 파일에 저장한 값이 있으면 그것).
+
+    Examples:
+        >>> det = BoundaryDetector()
+        >>> det.update(0.0, np.zeros((53, 2)), np.zeros(53, bool)) is None
+        True
+    """
+
+    @property
+    def uses_face(self):
+        """realtime.py 가 얼굴 33점을 뽑아 update(..., face=, face_mask=) 로 넘길지. 표정 단서를 켰을 때만."""
+        return self.cfg.face_cue
+
+    def __init__(self, model=None, config=None):
+        saved, crop = {}, None
+        if isinstance(model, str):
+            model, ck = load_model(model)
+            saved, crop = ck.get("detector", {}), ck.get("train_crop")
+        self.model = None if model is None else model.eval()   # 학습 모드로 넘겨도 dropout 을 끈다(실시간 결과가 매번 같게)
+        self.cfg = config or DetectorConfig(**saved)
+        if model is not None:
+            rf = receptive_field(model)
+            if rf is not None and self.cfg.window < rf:
+                raise ValueError("입력 창(%d)이 TCN 받아들이는 범위(%d)보다 짧아 학습 때와 출력이 달라진다" % (self.cfg.window, rf))
+            if rf is None and crop is not None and self.cfg.window != crop:
+                raise ValueError("GRU 입력 창(%d)이 학습 조각 길이(%d)와 다르다" % (self.cfg.window, crop))
+        self.fx = FeatureExtractor(self.cfg.fps)
+        self.reset()
+
+    def reset(self):
+        """새 영상·새 사람을 시작할 때 부른다. 버퍼와 진행 중 구간·문장을 모두 비운다."""
+        self.fx.reset()
+        self.feats = deque(maxlen=self.cfg.window)
+        self.last_t = None
+        self.start = self.cand = self.last_active = None
+        self.run_on = self.run_off = 0
+        self.still_since = None
+        self.need_motion = False
+        self.seg_wrist = self.seg_finger = 0.0
+        self.sentence = []                   # 지금 문장의 단어 [(시작, 끝, 종류)]
+        self.face_hist = deque(maxlen=int(self.cfg.fps * 30))   # (t, 눈썹, 입), 문장 시작부터
+        self.last_probs = None
+
+    # -- 판정 부품 --
+    def _activity(self, still):
+        """반환: (활동 여부, 새 단어 시작 확률 또는 None)."""
+        if self.model is not None:
+            x = torch.from_numpy(np.stack(self.feats)[None])
+            with torch.no_grad():
+                p = torch.softmax(self.model(x)[0, -1], 0).numpy()
+            self.last_probs = p
+            # 손(손 21점·포즈 손목)이 하나도 안 보이면 모델 출력과 무관하게 비활동. 학습 영상에는 이런 프레임이 거의 없어
+            # 모델이 마지막 활동 상태를 이어 가는 일이 있었다(사람이 화면에서 사라진 영상). 짧은 미검출은 off_frames 가 흡수한다
+            return self.fx.last["visible"] and float(p[1] + p[2]) >= self.cfg.act_thr, float(p[1])
+        last = self.fx.last
+        if self.need_motion and not still:
+            self.need_motion = False
+        active = last["present"] and (last["raised"] or last["speed"] >= self.cfg.move_speed)
+        return active and not self.need_motion, None
+
+    def _seg_kind(self, dur):
+        if dur >= self.cfg.fs_min_s - EPS and self.seg_finger >= self.cfg.fs_ratio * max(self.seg_wrist, 1e-6):
+            return "fingerspelling"
+        return "word"
+
+    def _close(self, end):
+        start, self.start = self.start, None
+        self.run_off = 0
+        self.still_since = None
+        dur = end - start
+        if dur < self.cfg.min_seg_s - EPS:
+            return None
+        seg = (start, end, self._seg_kind(dur))
+        self.sentence.append(seg)
+        return seg
+
+    def _open(self, t):
+        self.start, self.last_active = t, t
+        self.b_armed = False               # 새 단어를 연 B 확률이 한 번 내려가야 다음 B 로 자를 수 있다
+        self.seg_wrist = self.seg_finger = 0.0
+        self.run_off = 0
+        if not self.sentence:              # 문장의 첫 단어: 표정 기준을 새로 잡는다(앞 문장 표정을 섞지 않게)
+            while self.face_hist and self.face_hist[0][0] < t - 1.0:
+                self.face_hist.popleft()
+
+    def sentence_cues(self, t):
+        """문장 끝 단서 점수 (길이, 표정). 계산할 수 없으면 그 값은 None."""
+        cfg = self.cfg
+        length = face = None
+        if len(self.sentence) >= 2:
+            durs = [e - s for s, e, _ in self.sentence]
+            ratio = durs[-1] / max(np.median(durs[:-1]), 1e-6)
+            length = float(np.clip(0.5 + 0.5 * (ratio - 1) / (cfg.len_ratio - 1), 0, 1))
+        if cfg.face_cue and self.face_hist and self.sentence:
+            arr = np.array([(ft, b, m) for ft, b, m in self.face_hist if ft >= self.sentence[0][0]])
+            if len(arr) >= 4:
+                tail = arr[arr[:, 0] >= self.sentence[-1][1] - cfg.face_tail_s]
+                body = arr[arr[:, 0] < self.sentence[-1][1] - cfg.face_tail_s]
+                if len(tail) and len(body):
+                    change = np.abs(np.median(tail[:, 1:], 0) - np.median(body[:, 1:], 0)).max()
+                    face = float(np.clip(change / cfg.face_ref, 0, 1))
+        return length, face
+
+    def _check_sentence_end(self, t):
+        pause = t - self.sentence[-1][1]
+        if pause < self.cfg.pause_s - EPS:
+            return None
+        cues = [c for c in self.sentence_cues(t) if c is not None]
+        score = float(np.mean(cues)) if cues else 0.5       # 단서가 없으면 중립: 멈춤 pause_s 만으로 끝
+        if score >= self.cfg.cue_thr or pause >= self.cfg.max_pause_s - EPS:
+            out = (self.sentence[0][0], self.sentence[-1][1], "sentence_end")
+            self.sentence = []
+            return out
+        return None
+
+    # -- 공개 API --
+    def update(self, t, xy, mask, face=None, face_mask=None):
+        """프레임 하나를 넣는다.
+
+        Args:
+            t (float): 프레임 시각(초). 앞 프레임보다 크지 않으면 그 프레임은 무시한다(None).
+            xy (np.ndarray): (53, 2) 정규화 좌표. NaN·화면 밖 점은 마스크를 끈 것으로 본다.
+            mask (np.ndarray): (53,) 검출 여부. 모두 0 이어도 된다(손이 화면 밖).
+            face, face_mask (np.ndarray | None): (33, 2), (33,) 얼굴 점. 문장 끝 보조 단서.
+
+        Returns:
+            tuple[float, float, str] | None: 구간이 끝난 프레임에서만 (시작, 끝, 종류).
+
+        Raises:
+            ValueError: t 가 유한한 수가 아니거나 xy·mask 모양이 틀릴 때.
+        """
+        t = float(t)
+        if not math.isfinite(t):
+            raise ValueError("t 가 유한한 수가 아니다: %r" % (t,))
+        if self.last_t is not None and t <= self.last_t:
+            return None
+        self.last_t = t
+        self.feats.append(self.fx.step(t, xy, mask))
+        fs = face_signals(face, face_mask)
+        if fs is not None:
+            self.face_hist.append((t,) + fs)
+        last, cfg = self.fx.last, self.cfg
+        still = last["wrist_speed"] < cfg.hold_speed and last["finger"] < cfg.hold_speed
+        active, p_begin = self._activity(still)
+
+        if self.start is None:                                    # 쉬는 중
+            if active:
+                self.run_on += 1
+                if self.run_on == 1:
+                    self.cand = t
+                if self.run_on >= cfg.on_frames:
+                    self._open(self.cand)
+                    self.run_on = 0
+                return None
+            self.run_on = 0
+            return self._check_sentence_end(t) if self.sentence else None
+
+        if active:                                                # 구간 안
+            self.run_off = 0
+            self.seg_wrist += last["wrist_speed"]
+            self.seg_finger += last["finger"]
+            if p_begin is not None:                               # 단어와 단어가 쉬지 않고 이어질 때: B 가 다시 올라오면 자른다
+                if p_begin < cfg.begin_thr:
+                    self.b_armed = True
+                elif self.b_armed and t - self.start >= cfg.min_seg_s - EPS:
+                    seg = self._close(self.last_active)
+                    self._open(t)
+                    return seg
+            if self.model is None:                                # 규칙: 손을 든 채 멈추면 단어 끝
+                if still:
+                    self.still_since = self.still_since if self.still_since is not None else self.last_active
+                    if t - self.still_since >= cfg.word_pause_s - EPS:
+                        self.need_motion = True
+                        return self._close(self.still_since)
+                    return None
+                self.still_since = None
+            self.last_active = t
+            return None
+        self.run_off += 1
+        if self.run_off >= cfg.off_frames:
+            return self._close(self.still_since if self.still_since is not None else self.last_active)
+        return None
+
+    def flush(self):
+        """스트림이 끝났을 때 진행 중인 단어와 문장을 닫는다. 반환: 이벤트 리스트(0~2개)."""
+        out = []
+        if self.start is not None:
+            seg = self._close(self.still_since if self.still_since is not None else self.last_active)
+            if seg:
+                out.append(seg)
+        if self.sentence:
+            out.append((self.sentence[0][0], self.sentence[-1][1], "sentence_end"))
+            self.sentence = []
+        return out
 
 
 # ---- 검증: 문장 영상 단위의 경계 정확도와 지연 ----
