@@ -1,0 +1,226 @@
+{
+ "arch": "tcn",
+ "fold": 1,
+ "seed": 0,
+ "synthetic": false,
+ "git": "2bbc8b8+수정중",
+ "split": {
+  "train": [
+   2,
+   3,
+   4,
+   7,
+   9,
+   10,
+   11,
+   12,
+   14,
+   15,
+   16,
+   18
+  ],
+  "val": [
+   6,
+   8,
+   17
+  ],
+  "test": [
+   1,
+   5,
+   13
+  ]
+ },
+ "words": [
+  2,
+  5
+ ],
+ "train_crop": 96,
+ "n": {
+  "train": 3000,
+  "val": 300,
+  "test": 300
+ },
+ "feat_names": [
+  "L_present",
+  "L_on_change",
+  "L_speed",
+  "L_acc",
+  "L_finger",
+  "L_wrist_x",
+  "L_wrist_y",
+  "L_wrist_ok",
+  "R_present",
+  "R_on_change",
+  "R_speed",
+  "R_acc",
+  "R_finger",
+  "R_wrist_x",
+  "R_wrist_y",
+  "R_wrist_ok"
+ ],
+ "detector": {
+  "fps": 15.0,
+  "window": 61,
+  "on_frames": 2,
+  "off_frames": 4,
+  "act_thr": 0.5,
+  "begin_thr": 0.5,
+  "move_speed": 0.6,
+  "hold_speed": 0.5,
+  "word_pause_s": 0.25,
+  "min_seg_s": 0.2,
+  "pause_s": 0.8,
+  "max_pause_s": 1.6,
+  "cue_thr": 0.5,
+  "len_ratio": 1.3,
+  "face_ref": 0.06,
+  "face_tail_s": 0.5,
+  "fs_min_s": 0.6,
+  "fs_ratio": 2.0
+ },
+ "params": 57411,
+ "train_s": 53.44075918197632,
+ "best_val_macro_f1": 0.7447563539551157,
+ "history": [
+  {
+   "epoch": 1,
+   "loss": 0.4872724711894989,
+   "val_macro_f1": 0.7256388660587394,
+   "val_active_f1": 0.9442721278475033
+  },
+  {
+   "epoch": 2,
+   "loss": 0.353305009752512,
+   "val_macro_f1": 0.7309194017171295,
+   "val_active_f1": 0.9424322823471339
+  },
+  {
+   "epoch": 3,
+   "loss": 0.3316046729683876,
+   "val_macro_f1": 0.7358078447152967,
+   "val_active_f1": 0.9425130652124517
+  },
+  {
+   "epoch": 4,
+   "loss": 0.32266472429037096,
+   "val_macro_f1": 0.733849465578425,
+   "val_active_f1": 0.9413943266452321
+  },
+  {
+   "epoch": 5,
+   "loss": 0.3123349130153656,
+   "val_macro_f1": 0.7351304209244262,
+   "val_active_f1": 0.9445685362404967
+  },
+  {
+   "epoch": 6,
+   "loss": 0.3116462230682373,
+   "val_macro_f1": 0.7359798531310945,
+   "val_active_f1": 0.9429684296842968
+  },
+  {
+   "epoch": 7,
+   "loss": 0.31059298291802406,
+   "val_macro_f1": 0.7360014521005432,
+   "val_active_f1": 0.9438705304881806
+  },
+  {
+   "epoch": 8,
+   "loss": 0.3052524082362652,
+   "val_macro_f1": 0.7397130420586029,
+   "val_active_f1": 0.944317532838378
+  },
+  {
+   "epoch": 9,
+   "loss": 0.29856528490781786,
+   "val_macro_f1": 0.7303227250136831,
+   "val_active_f1": 0.9446757389341122
+  },
+  {
+   "epoch": 10,
+   "loss": 0.29877997413277624,
+   "val_macro_f1": 0.7371282290034782,
+   "val_active_f1": 0.9460538227306394
+  },
+  {
+   "epoch": 11,
+   "loss": 0.29959476217627523,
+   "val_macro_f1": 0.7370164314795855,
+   "val_active_f1": 0.9451513102628721
+  },
+  {
+   "epoch": 12,
+   "loss": 0.2978996202349663,
+   "val_macro_f1": 0.7394806931615209,
+   "val_active_f1": 0.9454329044306266
+  },
+  {
+   "epoch": 13,
+   "loss": 0.2930491991341114,
+   "val_macro_f1": 0.739895470289745,
+   "val_active_f1": 0.9450008208832704
+  },
+  {
+   "epoch": 14,
+   "loss": 0.2895210079848766,
+   "val_macro_f1": 0.7447563539551157,
+   "val_active_f1": 0.9468728154940581
+  },
+  {
+   "epoch": 15,
+   "loss": 0.29442006498575213,
+   "val_macro_f1": 0.7400679431293004,
+   "val_active_f1": 0.9461326253344673
+  },
+  {
+   "epoch": 16,
+   "loss": 0.2893454164266586,
+   "val_macro_f1": 0.7394206557667146,
+   "val_active_f1": 0.9464083506619176
+  },
+  {
+   "epoch": 17,
+   "loss": 0.2905342847108841,
+   "val_macro_f1": 0.7390866486765612,
+   "val_active_f1": 0.94567238173931
+  },
+  {
+   "epoch": 18,
+   "loss": 0.2884861260652542,
+   "val_macro_f1": 0.7398554113138701,
+   "val_active_f1": 0.9470179621028403
+  },
+  {
+   "epoch": 19,
+   "loss": 0.28552246168255807,
+   "val_macro_f1": 0.7400046685178494,
+   "val_active_f1": 0.9452699810432337
+  },
+  {
+   "epoch": 20,
+   "loss": 0.28652390390634536,
+   "val_macro_f1": 0.7410704017646439,
+   "val_active_f1": 0.9458675390407999
+  }
+ ],
+ "test_model": {
+  "n_videos": 300,
+  "frame_f1": 0.9377193776307974,
+  "segment_f1": 0.9838198653198653,
+  "mean_iou": 0.8826730651040858,
+  "latency_median_s": 0.1811666944821675,
+  "latency_p95_s": 0.33975437291463173,
+  "sentence_end_rate": 1.0,
+  "sentence_end_latency_median_s": 0.8184393655459088
+ },
+ "test_rule": {
+  "n_videos": 300,
+  "frame_f1": 0.8194331346312704,
+  "segment_f1": 0.3225981240981241,
+  "mean_iou": 0.4126853463550117,
+  "latency_median_s": 0.5971667302449544,
+  "latency_p95_s": 1.5756666667535901,
+  "sentence_end_rate": 1.0,
+  "sentence_end_latency_median_s": 0.907499968210856
+ }
+}
