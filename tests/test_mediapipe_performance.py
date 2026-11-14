@@ -19,12 +19,10 @@ def test_statistics_use_only_supplied_train_frames():
     assert all(np.array_equal(a,b) for a,b in zip(train,before))
 
 
-
 def test_constant_channels_safe_floor():
     mean,scale=exp.affine_statistics([np.ones((3,424),np.float32)])
     assert np.isfinite(scale).all() and (scale==np.float32(.05)).all()
     assert not ((np.ones((3,424))-mean)/scale).any()
-
 
 
 @pytest.mark.parametrize('arrays',[[],[np.ones(2)],[np.zeros((0,4))],[np.full((2,4),np.nan)],
@@ -33,11 +31,9 @@ def test_invalid_statistics_rejected(arrays):
     with pytest.raises(ValueError):exp.affine_statistics(arrays)
 
 
-
 @pytest.mark.parametrize('floor',[0,-1,float('nan'),float('inf')])
 def test_invalid_floor_rejected(floor):
     with pytest.raises(ValueError):exp.affine_statistics([np.ones((2,4))],floor)
-
 
 
 def test_folded_logits_equal_standardized_and_original_model_unchanged():
@@ -56,11 +52,9 @@ def test_folded_logits_equal_standardized_and_original_model_unchanged():
     assert torch.equal(la,lb) and all(torch.equal(v,state[k]) for k,v in model.state_dict().items())
 
 
-
 def test_fold_bad_scale_rejected():
     model=exp.FingerspellingCTC(exp.CTCModelConfig(424,52,0,hidden_size=8))
     with pytest.raises(ValueError):exp.fold_affine(model,np.zeros(424),np.zeros(424))
-
 
 
 def test_batches_same_targets_no_padding_standardization():
@@ -69,7 +63,6 @@ def test_batches_same_targets_no_padding_standardization():
     assert batch['features'].shape==(2,5,424)
     assert np.all(batch['features'][0,:3]==.5) and not batch['features'][0,3:].any()
     assert batch['targets'].tolist()==[1,31,1,31] and batch['input_lengths'].tolist()==[3,5]
-
 
 
 def test_blank_counts_and_cer_include_only_real_frames():
@@ -83,7 +76,6 @@ def test_blank_counts_and_cer_include_only_real_frames():
     assert result['jamo_cer']==1 and result['mean_prediction_length']==0
 
 
-
 def synthetic_trainer():
     torch.set_num_threads(1)
     model=exp.FingerspellingCTC(exp.CTCModelConfig(424,52,0,hidden_size=8,dropout=0))
@@ -94,10 +86,8 @@ def synthetic_trainer():
     return trainer
 
 
-
 def fake_score(model,*args):
     return dict(jamo_cer=float(model.head[1].bias[0].detach()))
-
 
 
 def test_resume_after_last_checkpoint_before_selection(tmp_path,monkeypatch):
@@ -106,7 +96,6 @@ def test_resume_after_last_checkpoint_before_selection(tmp_path,monkeypatch):
     key=exp.repair_selection(trainer,tmp_path,[],np.zeros(424),np.ones(424))
     assert key[2]==1 and exp.load_checkpoint(tmp_path/'selected.pt')['epoch']==1
     assert exp.base.read(tmp_path/'selected.json')['epoch']==1
-
 
 
 def test_resume_recovers_better_current_epoch_and_interrupted_json(tmp_path,monkeypatch):
@@ -124,7 +113,6 @@ def test_resume_recovers_better_current_epoch_and_interrupted_json(tmp_path,monk
     assert exp.base.read(tmp_path/'selected.json')['epoch']==2
 
 
-
 def test_deployment_checkpoint_cannot_resume_training(tmp_path):
     from fingerspelling.ctc_checkpoint import checkpoint_payload,write_checkpoint
     trainer=synthetic_trainer();payload=checkpoint_payload(trainer,include_best=False)
@@ -133,3 +121,43 @@ def test_deployment_checkpoint_cannot_resume_training(tmp_path):
     weights={k:v.clone() for k,v in trainer.model.state_dict().items()}
     with pytest.raises((ValueError,KeyError)):trainer.resume(path)
     assert all(torch.equal(v,weights[k]) for k,v in trainer.model.state_dict().items())
+
+
+@pytest.mark.parametrize('tokens',[[],['ㄴ','ㄱ','ㅏ'],['ㅏ','ㄱ','ㅏ'],['ㄱ','ㄱ','ㅏ'],['ㅎ','ㅏ','ㄴ','ㄱ','ㅡ','ㄹ']])
+def test_partial_rendering_preserves_every_token(tokens):
+    from fingerspelling.partial_compose import compose_partial
+    from fingerspelling import jamo
+    result=compose_partial(tokens,mode='resync')
+    assert jamo.decompose_hangul(result)==tokens
+    if tokens==['ㄴ','ㄱ','ㅏ']:assert result=='ㄴ가'
+
+
+def test_partial_mode_is_explicit_and_defaults_unchanged():
+    from fingerspelling_runtime import render,vocabulary
+    ids=vocabulary().encode(['ㄴ','ㄱ','ㅏ'])
+    assert render(ids)=='ㄴㄱㅏ' and render(ids,'resync')=='ㄴ가'
+    with pytest.raises(ValueError):render(ids,'unknown')
+
+
+def test_rendering_metrics_no_reference_guided_rewrite():
+    from compare_mediapipe_rendering import rendering_metrics
+    videos=[dict(video_id='synthetic',prediction_jamo='ㄴㄱㅏ')]
+    result=rendering_metrics(videos,{'synthetic':'가'},'resync')
+    assert result['I']==1 and result['cer']==1 and result['tokens_preserved']
+    with pytest.raises(ValueError):rendering_metrics(videos,{'other':'가'},'resync')
+    with pytest.raises(ValueError):rendering_metrics([],{},'resync')
+
+
+def test_public_render_policy_environment_is_explicit(monkeypatch):
+    import fingerspelling_runtime as runtime
+    recorded=[]
+    def reader(path,device='cpu',render_mode='strict'):
+        recorded.append(render_mode)
+        return lambda xy,mask:'synthetic'
+    monkeypatch.setattr(runtime,'load_reader',reader)
+    monkeypatch.setenv('FINGERSPELLING_CHECKPOINT','D:/synthetic/checkpoint.pt')
+    monkeypatch.delenv('FINGERSPELLING_RENDER_MODE',raising=False)
+    runtime.read_fingerspelling(None,None)
+    monkeypatch.setenv('FINGERSPELLING_RENDER_MODE','resync')
+    runtime.read_fingerspelling(None,None)
+    assert recorded==['strict','resync']
