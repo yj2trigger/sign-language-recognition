@@ -1,1 +1,1 @@
-"""Fingerspelling label preparation; no model or video extraction side effects."""
+"""Reusable Issue #2 modules from existing PRs."""
