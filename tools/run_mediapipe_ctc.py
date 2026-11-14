@@ -34,10 +34,8 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-
 def read(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
-
 
 
 def write(path, value):
@@ -48,7 +46,6 @@ def write(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
-
 
 
 def candidates(video_zip, label_zip):
@@ -99,7 +96,6 @@ def candidates(video_zip, label_zip):
     return rows, dict(rejected), len(seen), len(mapping)
 
 
-
 def feature_ok(path, row):
     with np.load(path, allow_pickle=False) as data:
         xy, mask, values, target, times = (data[k] for k in ('xy', 'mask', 'features', 'target', 't'))
@@ -114,7 +110,6 @@ def feature_ok(path, row):
     return digest(path)
 
 
-
 def source_config(args):
     import cv2
     import mediapipe
@@ -127,7 +122,6 @@ def source_config(args):
                   extraction=dict(complexity=0, clock='decoded_PTS', target_fps=15, mirror=False))
 
 
-
 def checked_temporary(path, row):
     if path.stat().st_size != row['bytes']:
         raise ValueError('temporary_size_mismatch')
@@ -137,7 +131,6 @@ def checked_temporary(path, row):
             crc=zlib.crc32(chunk,crc)
     if crc != row['crc']:
         raise ValueError('temporary_crc_mismatch')
-
 
 
 def prepare(args):
@@ -282,7 +275,6 @@ def prepare(args):
     return state
 
 
-
 def split_rows(rows, seed):
     """FS + identical-text connected groups; not verified performer independent."""
     parent = list(range(len(rows)))
@@ -307,3 +299,157 @@ def split_rows(rows, seed):
     n = max(1, len(groups)//5)
     return {name: [row for group in subset for row in group] for name, subset in
             (('validation', groups[:n]), ('test', groups[n:2*n]), ('train', groups[2*n:]))}
+
+
+def batches(rows, output, batch_size, order=None):
+    rows = rows if order is None else [rows[i] for i in order]
+    for start in range(0, len(rows), batch_size):
+        subset = rows[start:start+batch_size]
+        arrays = []
+        for row in subset:
+            path = output/'features'/(row['video_id']+'.npz')
+            with np.load(path, allow_pickle=False) as data:
+                arrays.append((data['features'].copy(), data['target'].copy()))
+        lengths = np.asarray([len(x) for x,y in arrays], np.int64)
+        values = np.zeros((len(arrays), int(lengths.max()), 424), np.float32)
+        for i, (x,y) in enumerate(arrays):
+            values[i,:len(x)] = x
+        yield dict(features=values, input_lengths=lengths, targets=np.concatenate([y for x,y in arrays]),
+                   target_lengths=np.asarray([len(y) for x,y in arrays], np.int64))
+
+
+def evaluate(model, rows, output, device):
+    videos = []
+    model.eval()
+    with torch.inference_mode():
+        for row, batch in zip(rows, batches(rows, output, 1)):
+            if device.type == 'cuda': torch.cuda.synchronize()
+            tick = time.perf_counter()
+            scores, lengths = model(torch.as_tensor(batch['features'], device=device), batch['input_lengths'])
+            ids = greedy_decode(scores[0].cpu().tolist(), blank_id=0, num_classes=52, length=int(lengths[0]))
+            predicted = ''.join(tokens_for(ids))
+            target = ''.join(tokens_for(row['target_ids']))
+            text = render(ids)
+            elapsed = time.perf_counter()-tick
+            counts = edit_counts(target, predicted)
+            hangul = edit_counts(row['text'], text)
+            videos.append(dict(video_id=row['video_id'], reference_jamo=target, predicted_jamo=predicted,
+                reference=row['text'], prediction=text, D=counts.deletions, I=counts.insertions,
+                S=counts.substitutions, N=len(target), hangul_errors=hangul.errors,
+                hangul_N=len(row['text']), exact=text == row['text'], seconds=elapsed))
+    return dict(samples=len(rows), jamo_cer=sum(r['D']+r['I']+r['S'] for r in videos)/sum(r['N'] for r in videos),
+                hangul_cer=sum(r['hangul_errors'] for r in videos)/sum(r['hangul_N'] for r in videos),
+                deletions=sum(r['D'] for r in videos), insertions=sum(r['I'] for r in videos),
+                substitutions=sum(r['S'] for r in videos), exact_match=sum(r['exact'] for r in videos)/len(videos),
+                inference_mean_ms=float(np.mean([r['seconds']*1000 for r in videos])), videos=videos)
+
+
+def train(args, state):
+    torch.set_num_threads(2)
+    if not torch.cuda.is_available():
+        raise RuntimeError('requested_CUDA_unavailable')
+    seed_everything(args.seed)
+    rows = [r for r in state['selected'] if r['video_id'] in state['completed']]
+    splits = split_rows(rows, args.seed)
+    vocab = vocabulary()
+    config = dict(seed=args.seed, hidden_size=64, epochs=args.epochs, batch_size=8,
+                  feature_schema=feature_schema(), vocabulary=dict(token_ids=dict(vocab.token_ids), blank_id=0),
+                  splits=splits, feature_hashes={r['video_id']:state['completed'][r['video_id']]['sha256'] for r in rows},
+                  performer_independent=False, label_semantics='unverified_exploratory')
+    config_path = args.output/'training-config.json'
+    if config_path.exists() and read(config_path) != config:
+        raise ValueError('training_configuration_changed')
+    write(config_path, config)
+    model = FingerspellingCTC(CTCModelConfig(input_size=424, num_classes=52, blank_id=0, hidden_size=64))
+    trainer = CTCTrainer(model, CTCTrainingConfig(seed=args.seed), device='cuda:0',
+                         vocabulary=config['vocabulary'], feature_schema=config['feature_schema'])
+    ckpt = args.output/'checkpoints'
+    ckpt.mkdir(exist_ok=True)
+    if (ckpt/'last.pt').exists(): trainer.resume(ckpt/'last.pt')
+    # Explicit finite forward/backward smoke, without updating production weights.
+    if trainer.epoch == 0:
+        probe = next(batches(splits['train'][:2], args.output, 2))
+        from fingerspelling.ctc_training import ctc_loss
+        scores, lengths = trainer.model(torch.as_tensor(probe['features'], device=trainer.device), probe['input_lengths'])
+        loss = ctc_loss(scores, lengths, probe['targets'], probe['target_lengths'], blank_id=0)
+        loss.backward()
+        trainer.optimizer.zero_grad(set_to_none=True)
+        write(args.output/'forward-backward.json', dict(loss=float(loss.detach()), finite=True, device='cuda:0'))
+    history_path = args.output/'history.json'
+    history = read(history_path) if history_path.exists() else []
+    if len(history) > trainer.epoch:
+        raise ValueError('history_ahead_of_checkpoint')
+    for row in trainer.history[len(history):]:
+        history.append(dict(row, recovered=True, train_cer=None, validation_cer=None, seconds=None))
+    started = time.perf_counter()
+    while trainer.epoch < args.epochs:
+        tick = time.perf_counter()
+        order = np.random.default_rng(args.seed*1000+trainer.epoch).permutation(len(splits['train']))
+        trainer.fit(lambda: batches(splits['train'], args.output, 8, order),
+                    lambda: batches(splits['validation'], args.output, 8), epochs=1, checkpoint_dir=ckpt)
+        training = evaluate(trainer.model, splits['train'], args.output, trainer.device)
+        validation = evaluate(trainer.model, splits['validation'], args.output, trainer.device)
+        history.append(dict(trainer.history[-1], train_cer=training['jamo_cer'],
+            validation_cer=validation['jamo_cer'], seconds=time.perf_counter()-tick))
+        write(history_path, history)
+        print(json.dumps(history[-1]), flush=True)
+    # Repair best artifact if interrupted between last.pt and best.pt write.
+    from fingerspelling.ctc_checkpoint import write_checkpoint
+    write_checkpoint(ckpt/'best.pt', trainer.best_checkpoint)
+    reader = FingerspellingReader(ckpt/'best.pt', device='cuda:0')
+    result = dict(gpu=torch.cuda.get_device_name(0), torch=torch.__version__,
+        selected_epoch=load_checkpoint(ckpt/'best.pt')['epoch'], epoch=trainer.epoch,
+        parameters=sum(p.numel() for p in reader.recognizer.model.parameters()),
+        checkpoint_bytes=(ckpt/'best.pt').stat().st_size, training_session_seconds=time.perf_counter()-started,
+        training_seconds=sum(r['seconds'] for r in history) if all(r['seconds'] is not None for r in history) else None,
+        final_train_loss=history[-1]['train_loss'], final_validation_loss=history[-1]['validation_loss'],
+        performer_independent=False, semantic_validation='unverified', checkpoint=str(ckpt/'best.pt'),
+        splits={name:evaluate(reader.recognizer.model, subset, args.output, reader.recognizer.device)
+                for name,subset in splits.items()})
+    probe_path=args.output/'features'/(splits['test'][0]['video_id']+'.npz')
+    with np.load(probe_path, allow_pickle=False) as probe:
+        result['interface_prediction']=reader(probe['xy'],probe['mask'])
+        fresh=FingerspellingReader(ckpt/'best.pt', device='cuda:0')
+        result['checkpoint_reload_identical']=result['interface_prediction']==fresh(probe['xy'],probe['mask'])
+    write(args.output/'evaluation.json',result)
+    state['stages'].update(training=True,evaluation=True,interface=True)
+    write(args.output/'progress.json',state)
+    print(json.dumps({k:v for k,v in result.items() if k!='splits'}),flush=True)
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--videos',type=Path,required=True)
+    parser.add_argument('--labels',type=Path,required=True)
+    parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--stage',choices=['prepare','train','all'],default='all')
+    parser.add_argument('--max-videos',type=int,default=64)
+    parser.add_argument('--extraction-seconds',type=float,default=900)
+    parser.add_argument('--epochs',type=int,default=40)
+    parser.add_argument('--seed',type=int,default=20261114)
+    args=parser.parse_args()
+    if args.max_videos<10 or args.epochs<1 or not np.isfinite(args.extraction_seconds) or args.extraction_seconds<=0:
+        parser.error('invalid execution budget')
+    args.output=args.output.resolve()
+    if args.output.drive.upper()!='D:' or args.output==ROOT or ROOT in args.output.parents:
+        parser.error('outputs must be outside repository on D drive')
+    for p in ('features','logs','diagnostics'):
+        (args.output/p).mkdir(parents=True,exist_ok=True)
+    before={str(p): (p.stat().st_size,p.stat().st_mtime_ns) for p in (args.videos,args.labels)}
+    state=prepare(args) if args.stage in ('prepare','all') else read(args.output/'progress.json')
+    if args.stage in ('train','all'):
+        # Validate all completed features and extraction configuration before training/resume.
+        if state['config']!=source_config(args): raise ValueError('prepare_source_or_config_changed')
+        for row in state['selected']:
+            if row['video_id'] in state['completed']:
+                expected=state['completed'][row['video_id']]['sha256']
+                if feature_ok(args.output/'features'/(row['video_id']+'.npz'),row)!=expected:
+                    raise ValueError('feature_changed')
+        train(args,state)
+    after={str(p): (p.stat().st_size,p.stat().st_mtime_ns) for p in (args.videos,args.labels)}
+    if before!=after: raise RuntimeError('source_metadata_changed')
+    write(args.output/('integrity-'+args.stage+'.json'),dict(source_stat_unchanged=True,
+        protection='read-only ZIP access; size/mtime comparison, not whole ZIP hash',sources=after))
+
+
+if __name__=='__main__': main()
