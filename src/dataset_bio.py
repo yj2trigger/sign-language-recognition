@@ -103,6 +103,27 @@ def load_full_clips(feature_dirs, signers=None):
     return clips
 
 
+def load_real_sentences(feature_dirs, signers=None):
+    """실제 문장 영상에서 뽑은 npz(t, xy, mask, face, face_mask, seg (N,2) 시각만)를 읽는다. 단어명은 파일에 없다.
+    수행자 번호는 파일 이름의 REALxx 에서 읽는다. 반환: concat_sentence 와 같은 딕셔너리 목록(+ name)."""
+    keep = None if signers is None else set(signers)
+    out = []
+    for d in feature_dirs:
+        for f in sorted(glob.glob(os.path.join(d, "*.npz"))):
+            name = os.path.basename(f)[:-4]
+            m = re.search(r"REAL(\d+)", name)
+            if m is None or (keep is not None and int(m.group(1)) not in keep):
+                continue
+            z = np.load(f)
+            if "seg" not in z.files or not len(z["seg"]):
+                continue
+            s = {k: z[k].copy() for k in ("t", "xy", "mask", "face", "face_mask")}
+            s["segments"] = [(float(a), float(b), "word") for a, b in z["seg"]]
+            s["signer"], s["name"] = int(m.group(1)), name
+            out.append(s)
+    return out
+
+
 # 실제 문장 라벨(AI-Hub Validation 문장 형태소, 정면 4,000개, 수행자 17·18)의 p5~p95 범위(초).
 # 첫 단어 앞 여유 / 단어 사이 간격 / 마지막 단어 뒤 여유. 0.8초 이상인 단어 사이 간격은 없었다(문장 끝 멈춤과 겹치지 않음).
 SEN_LEAD, SEN_GAP, SEN_TAIL = (1.1, 2.6), (0.07, 0.38), (0.94, 1.94)
@@ -185,6 +206,81 @@ def make_sentences(clips, n, words=(2, 5), seed=0, fps=15.0):
         pick = [pool[j] for j in rng.choice(len(pool), size=min(k, len(pool)), replace=False)]
         out.append(concat_sentence(pick, rng, fps=fps))
     return out
+
+
+# ---- 합성 문장: 실제 데이터 없이 라벨러·탐지기·학습 루프가 도는지 확인한다 ----
+
+def _hand(center, spread, wiggle):
+    """손 21점: 손목 center, 손가락 끝을 spread 만큼 위로 펼치고 wiggle 로 흔든다."""
+    pts = np.tile(center, (21, 1)).astype(np.float32)
+    for f, tip in enumerate((4, 8, 12, 16, 20)):
+        for j, k in enumerate(range(tip - 3, tip + 1)):
+            pts[k] = center + np.array([(f - 2) * 0.01, -spread * (j + 1) / 4]) + wiggle[f] * (j + 1) / 4
+    return pts
+
+
+def synthetic_sentence(rng, n_words=3, fps=15.0, fingerspell_prob=0.0, end_face=True, signer=0):
+    """손 올림·움직임으로 단어를, 손 내림 또는 손 멈춤으로 단어 사이를 흉내 낸 합성 문장.
+
+    좌표 단위는 MediaPipe 정규화(0~1). 어깨너비 0.2, 쉬는 손은 화면 아래(손 마스크 꺼짐).
+    지문자 구간은 손목을 고정하고 손가락만 빠르게 움직인다. end_face 이면 마지막 단어 끝에서 눈썹을 올린다.
+    반환: concat_sentence 와 같은 딕셔너리.
+    """
+    frames, segs = [], []
+
+    def add(kind, dur, word=None):
+        for k in range(max(1, int(round(dur * fps)))):
+            frames.append((kind, k / fps, word))
+
+    add("rest", rng.uniform(0.6, 1.0))
+    kinds = []
+    for w in range(n_words):
+        kinds.append("fingerspelling" if rng.random() < fingerspell_prob else "word")
+        start = len(frames)
+        dur = rng.uniform(0.6, 1.0) if w < n_words - 1 else rng.uniform(0.9, 1.3)   # 마지막 단어는 길게(문장 끝 늘임)
+        add(kinds[-1], dur + (0.4 if kinds[-1] == "fingerspelling" else 0.0), w)    # 지문자는 글자 여러 개라 더 길다
+        segs.append((start, len(frames) - 1, kinds[-1]))
+        if w < n_words - 1:
+            add("hold" if rng.random() < 0.5 else "rest", rng.uniform(0.35, 0.6))
+    add("rest", rng.uniform(1.8, 2.4))
+
+    T = len(frames)
+    xy, mask = np.zeros((T, 53, 2), np.float32), np.zeros((T, 53), bool)
+    face, face_mask = np.zeros((T, 33, 2), np.float32), np.ones((T, 33), bool)
+    phase = rng.uniform(0, 2 * np.pi, 2)
+    last_up = np.array([[0.62, 0.5], [0.38, 0.5]], np.float32)
+    end_t = segs[-1][1] / fps
+    for i, (kind, tau, word) in enumerate(frames):
+        xy[i, 0] = (0.5, 0.2)
+        xy[i, 5], xy[i, 6] = (0.6, 0.4), (0.4, 0.4)
+        mask[i, [0, 5, 6, 9, 10]] = True
+        if kind == "rest":
+            wrists = np.array([[0.62, 0.95], [0.38, 0.95]], np.float32)
+        elif kind == "hold":
+            wrists = last_up
+        else:
+            amp = 0.004 if kind == "fingerspelling" else 0.05
+            base = np.array([[0.62, 0.5 + 0.03 * (word % 2)], [0.38, 0.5]], np.float32)
+            wrists = base + amp * np.stack([np.sin(2 * np.pi * 1.5 * tau + phase), np.cos(2 * np.pi * 1.5 * tau + phase)], 1)
+            last_up = wrists.astype(np.float32)
+        xy[i, 9], xy[i, 10] = wrists
+        if kind != "rest":
+            fast = 0.015 if kind == "fingerspelling" else 0.002
+            for h, start in enumerate((11, 32)):
+                wig = fast * np.stack([np.sin(2 * np.pi * 4 * tau + np.arange(5) + h),
+                                       np.cos(2 * np.pi * 4 * tau + np.arange(5))], 1) if kind != "hold" else np.zeros((5, 2))
+                xy[i, start:start + 21] = _hand(wrists[h], 0.06, wig)
+                mask[i, start:start + 21] = True
+        brow = 0.02 if end_face and end_t - 0.4 <= i / fps else 0.0
+        face[i, :10, 1] = 0.12 - brow            # 눈썹(위로 갈수록 y 가 작다)
+        face[i, 10:18, 1] = 0.15                  # 눈
+        face[i, 18:30, 1] = 0.25                  # 입
+        face[i, 26, 1], face[i, 27, 1] = 0.248, 0.252
+        face[i, 30, 1], face[i, 31, 1], face[i, 32, 1] = 0.2, 0.3, 0.05
+        face[i, :, 0] = 0.5
+    t = np.arange(T) / fps
+    return {"t": t, "xy": xy, "mask": mask, "face": face, "face_mask": face_mask,
+            "segments": [(t[a], t[b], k) for a, b, k in segs], "signer": signer}
 
 
 def _inside_repo(path):
