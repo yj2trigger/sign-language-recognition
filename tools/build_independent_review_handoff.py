@@ -72,7 +72,15 @@ def eligibility(training_ids,mapping_rows,review_rows,training_hashes=()):
         if not mapping_valid(mappings.get(vid)):reasons.append('UNVERIFIED_PERFORMER_MAPPING')
         elif mappings[vid]['performer_id'].strip() in train_people:reasons.append('TRAIN_PERFORMER_OVERLAP')
         if vid in train:reasons.append('TRAIN_VIDEO_OVERLAP')
+        if not row.get('source_video_id'):reasons.append('SOURCE_VIDEO_UNCONFIRMED')
         if row.get('source_video_id') and canonical(row['source_video_id']) in train:reasons.append('TRAIN_SOURCE_OVERLAP')
+        if review_valid(row) and row.get('source_video_id'):
+            source=canonical(row['source_video_id'])
+            for other_id,other in reviews.items():
+                if other_id==vid or not review_valid(other) or not other.get('source_video_id'):continue
+                if canonical(other['source_video_id'])==source and max(float(row['start']),float(other['start']))<min(float(row['end']),float(other['end'])):
+                    reasons.append('EVALUATION_SOURCE_INTERVAL_OVERLAP')
+                    break
         if not review_valid(row):reasons.append('INDEPENDENT_TRANSCRIPT_UNVERIFIED')
         feature_hash=row.get('feature_sha256','')
         if is_sha(feature_hash) and feature_hash in training_hashes:reasons.append('TRAIN_FEATURE_DUPLICATE')
