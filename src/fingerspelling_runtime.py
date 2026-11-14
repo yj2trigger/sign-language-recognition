@@ -43,8 +43,12 @@ def tokens_for(ids):
     return [inverse[i] for i in ids]
 
 
-def render(ids):
+def render(ids,mode='strict'):
     tokens = tokens_for(ids)
+    if mode in ('prefix','resync'):
+        from fingerspelling.partial_compose import compose_partial
+        return compose_partial(tokens,mode=mode)
+    if mode!='strict':raise ValueError('invalid_render_mode')
     try:
         return jamo.compose_hangul(tokens)
     except ValueError:
@@ -53,7 +57,9 @@ def render(ids):
 
 
 class FingerspellingReader:
-    def __init__(self, checkpoint, *, device='cpu'):
+    def __init__(self, checkpoint, *, device='cpu',render_mode='strict'):
+        if render_mode not in ('strict','prefix','resync'):raise ValueError('invalid_render_mode')
+        self.render_mode=render_mode
         vocab = vocabulary()
         self.recognizer = CTCRecognizer(checkpoint, device=device,
             expected_vocabulary=dict(token_ids=dict(vocab.token_ids), blank_id=0),
@@ -77,13 +83,13 @@ class FingerspellingReader:
             raise
         scores, lengths = self.recognizer.predict(values[None], [len(values)])
         ids = greedy_decode(scores[0].tolist(), blank_id=0, num_classes=52, length=int(lengths[0]))
-        return render(ids)
+        return render(ids,self.render_mode)
 
 
 @lru_cache(maxsize=2)
-def load_reader(checkpoint, device='cpu'):
+def load_reader(checkpoint, device='cpu',render_mode='strict'):
     """Cache one reader per immutable checkpoint path/device; no per-call loads."""
-    return FingerspellingReader(checkpoint, device=device)
+    return FingerspellingReader(checkpoint, device=device,render_mode=render_mode)
 
 
 def read_fingerspelling(xy, mask) -> str:
@@ -91,4 +97,4 @@ def read_fingerspelling(xy, mask) -> str:
     checkpoint = os.environ.get('FINGERSPELLING_CHECKPOINT')
     if not checkpoint:
         raise RuntimeError('set FINGERSPELLING_CHECKPOINT to a MediaPipe CTC checkpoint')
-    return load_reader(str(Path(checkpoint).resolve()))(xy, mask)
+    return load_reader(str(Path(checkpoint).resolve()),render_mode=os.environ.get('FINGERSPELLING_RENDER_MODE','strict'))(xy, mask)
