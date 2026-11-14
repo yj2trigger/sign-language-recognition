@@ -140,6 +140,149 @@ def checked_temporary(path, row):
 
 
 
+def prepare(args):
+    import cv2
+    import mediapipe
+    import landmarks
+    out = args.output
+    config = source_config(args)
+    state_path = out / 'progress.json'
+    if state_path.exists():
+        state = read(state_path)
+        if state['config'] != config:
+            raise ValueError('configuration_changed_use_new_output')
+    else:
+        rows, rejected, nvideos, nlabels = candidates(args.videos, args.labels)
+        # Sample FS groups first, keeping paired CROWD groups together.
+        rng = random.Random(args.seed)
+        groups = sorted({r['fs_id'] for r in rows})
+        rng.shuffle(groups)
+        rank = {g: i for i, g in enumerate(groups)}
+        rows.sort(key=lambda r: (rank[r['fs_id']], r['video_id']))
+        chosen = rows[:args.max_videos]
+        state = dict(config=config, zip_inventory_complete=True, whole_zip_crc_checked=False,
+            candidate_videos=nvideos, label_jsons=nlabels, eligible_pairs=len(rows), exclusions=rejected,
+            selected=chosen, completed={}, failed={}, stages=dict(zip_inventory=True, matching=True))
+        write(state_path, state)
+    started = time.perf_counter()
+    temp_dir = out / 'temp'
+    temp_dir.mkdir(exist_ok=True)
+    with zipfile.ZipFile(args.videos) as archive:
+        for row in state['selected']:
+            vid = row['video_id']
+            path = out / 'features' / (vid + '.npz')
+            if vid in state['completed']:
+                if feature_ok(path, row) != state['completed'][vid]['sha256']:
+                    raise ValueError('completed_feature_changed')
+                old_temp=out/'temp'/(vid+'.mp4')
+                owner=old_temp.with_suffix('.owner.json')
+                if old_temp.exists() and owner.exists() and read(owner)==dict(member=row['member'],crc=row['crc'],bytes=row['bytes']):
+                    checked_temporary(old_temp,row)
+                    old_temp.unlink()
+                    owner.unlink()
+                continue
+            if time.perf_counter() - started > args.extraction_seconds:
+                state['budget_stop'] = True
+                break
+            tick = time.perf_counter()
+            temporary = temp_dir / (vid + '.mp4')
+            created = False
+            try:
+                if shutil.disk_usage(out).free < row['bytes'] + 256 * 1024**2:
+                    raise OSError('insufficient_disk_space')
+                owner=temporary.with_suffix('.owner.json')
+                ownership=dict(member=row['member'],crc=row['crc'],bytes=row['bytes'])
+                if temporary.exists():
+                    if not owner.exists() or read(owner)!=ownership:
+                        raise FileExistsError('unowned_temporary_video_preserved')
+                    try:
+                        checked_temporary(temporary,row)
+                    except ValueError:
+                        # Preserve the owned partial copy, then retry the member.
+                        partial=temporary.with_name(temporary.name+'.partial-'+str(time.time_ns()))
+                        temporary.rename(partial)
+                    else:
+                        created=True
+                if not temporary.exists():
+                    write(owner,ownership)
+                    with archive.open(row['member']) as source, temporary.open('xb') as destination:
+                        created = True
+                        shutil.copyfileobj(source, destination, 1024**2)
+                # ZipExtFile verifies this member CRC upon complete read.
+                probe=probe_video(temporary)
+                fps,count=probe['src_fps'],probe['source_frames']
+                width,height=probe['resolution']
+                if abs(count / fps - row['label_duration']) > max(.2, 2 / fps):
+                    raise ValueError('video_label_duration_mismatch')
+                reused=False
+                previous=out.parent/'validated-run-01'
+                prior_state_path=previous/'progress.json'
+                if prior_state_path.exists() and probe['cfr_error_seconds']<1e-5:
+                    prior=read(prior_state_path)
+                    old=prior['completed'].get(vid)
+                    old_path=previous/'features'/(vid+'.npz')
+                    if (old and prior['config']['schema']==feature_schema()
+                            and prior['config']['landmarks_sha256']==config['landmarks_sha256']
+                            and prior['config']['video_size']==config['video_size']
+                            and prior['config']['video_mtime']==config['video_mtime']
+                            and prior['config']['mediapipe']==config['mediapipe']
+                            and prior['config']['opencv']==config['opencv']
+                            and feature_ok(old_path,row)==old['sha256']):
+                        expected=probe['times'][probe['indices']]
+                        expected=expected[(expected>=row['start'])&(expected<row['end'])]
+                        with np.load(old_path,allow_pickle=False) as cached:
+                            if np.allclose(cached['t'],expected,atol=1e-6) if len(cached['t'])==len(expected) else False:
+                                clip=dict(xy=cached['xy'].copy(),mask=cached['mask'].copy(),t=expected,
+                                          wh=old['fitted_wh'],src_fps=fps)
+                                reused=True
+                if not reused:
+                    clip=extract_timestamped(temporary,probe)
+                keep = (clip['t'] >= row['start']) & (clip['t'] < row['end'])
+                xy, mask, times = clip['xy'][keep], clip['mask'][keep], clip['t'][keep]
+                values = features(xy, mask)
+                target = TargetEncoder(vocabulary()).encode(row['text'], input_length=len(values))
+                if path.exists():
+                    # Orphan file after interrupted state write: verify before adopting.
+                    feature_ok(path, row)
+                    with np.load(path, allow_pickle=False) as old:
+                        if not all(np.array_equal(old[key],value) for key,value in
+                            [('features',values),('xy',xy),('mask',mask),('t',times),('target',target.ids)]):
+                            raise ValueError('orphan_feature_differs')
+                else:
+                    pending = path.with_suffix('.npz.tmp')
+                    with pending.open('wb') as stream:
+                        np.savez_compressed(stream, xy=xy, mask=mask, features=values,
+                                            target=np.asarray(target.ids, np.int64), t=times)
+                    os.replace(pending, path)
+                sha = feature_ok(path, row)
+                state['completed'][vid] = dict(sha256=sha, frames=len(values), source_fps=fps,
+                    source_frames=count, resolution=[width, height], extracted_fps=15,
+                    missing_rate=float(1-mask.mean()), hands_observed_rate=float(mask[:,11:].mean()),
+                    seconds=time.perf_counter()-tick, member_crc_checked=True, path=str(path),
+                    mediapipe=mediapipe.__version__, model_complexity=0, no_mirror=True,
+                    reused_verified_cfr_features=reused,cfr_clock_error_seconds=probe['cfr_error_seconds'],
+                    fitted_wh=clip['wh'], source_rotation_policy='OpenCV_auto_orientation_default',
+                    interval_max_error_seconds=float(np.max(np.abs(np.diff(times)-1/15))),
+                    start_time=float(times[0]), end_time=float(times[-1]))
+                state['failed'].pop(vid, None)
+                write(state_path, state)
+                if created:
+                    temporary.unlink()  # Only this invocation's verified, recorded MP4.
+                    owner.unlink()
+                print(json.dumps(dict(completed=len(state['completed']), video_id=vid,
+                    frames=len(values), seconds=time.perf_counter()-tick)), flush=True)
+            except (ValueError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                state['failed'][vid] = dict(error=type(exc).__name__, reason=str(exc),
+                    temporary_video_preserved=str(temporary) if created else None)
+                write(state_path, state)
+                print('failed', vid, repr(exc), flush=True)
+    state['stages']['extraction'] = len(state['completed']) == len(state['selected'])
+    state['stages']['features'] = bool(state['completed'])
+    write(state_path, state)
+    return state
+
+
+
 def split_rows(rows, seed):
     """FS + identical-text connected groups; not verified performer independent."""
     parent = list(range(len(rows)))

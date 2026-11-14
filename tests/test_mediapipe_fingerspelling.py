@@ -30,7 +30,6 @@ def sequence(n=16):
     return xy,np.ones((n,53),bool)
 
 
-
 @pytest.fixture
 def checkpoint(tmp_path):
     torch.set_num_threads(1)
@@ -43,7 +42,6 @@ def checkpoint(tmp_path):
     return path
 
 
-
 def test_features_shape_and_time_preservation():
     x,m=sequence(101)
     original=x.copy()
@@ -53,11 +51,9 @@ def test_features_shape_and_time_preservation():
     assert np.array_equal(y.reshape(101,53,8)[...,2].astype(bool),m)
 
 
-
 def test_translation_scale_invariance():
     x,m=sequence()
     np.testing.assert_allclose(features(x,m),features(x*2+.25,m),atol=2e-6)
-
 
 
 def test_wrist_motion_and_missing_mask():
@@ -69,13 +65,11 @@ def test_wrist_motion_and_missing_mask():
     assert not y[4:6,12,2].any() and y[4:6,12,3].all()
 
 
-
 @pytest.mark.parametrize('side',[11,32])
 def test_one_hand(side):
     x,m=sequence()
     m[:,side:side+21]=False
     assert np.isfinite(features(x,m)).all()
-
 
 
 @pytest.mark.parametrize('bad',[float('nan'),float('inf'),1e300])
@@ -87,7 +81,6 @@ def test_nonfinite_extreme_rejected(bad):
     with pytest.raises(ValueError):features(x,m)
 
 
-
 def test_no_shoulders_and_no_hands():
     x,m=sequence()
     m[:,[5,6]]=False
@@ -97,12 +90,10 @@ def test_no_shoulders_and_no_hands():
     with pytest.raises(ValueError):features(x,m)
 
 
-
 @pytest.mark.parametrize('text',['한글','가나','까','괜','뛰','강강'])
 def test_existing_jamo_roundtrip(text):
     encoded=TargetEncoder(vocabulary()).encode(text,input_length=100)
     assert render(encoded.ids)==text
-
 
 
 @pytest.mark.parametrize('text',['','A','1','가!'])
@@ -110,12 +101,10 @@ def test_target_rejects_unsupported(text):
     with pytest.raises(ValueError):TargetEncoder(vocabulary()).encode(text)
 
 
-
 def test_ctc_repeat_minimum():
     target=TargetEncoder(vocabulary()).encode('각가')
     with pytest.raises(ValueError):
         TargetEncoder(vocabulary()).encode('각가',input_length=target.minimum_input_length-1)
-
 
 
 def test_reader_cache_reload_and_empty(checkpoint):
@@ -130,7 +119,6 @@ def test_reader_cache_reload_and_empty(checkpoint):
     assert reader(x,m)==''
 
 
-
 @pytest.mark.parametrize('kind',['shape','mask','nan'])
 def test_reader_bad_input(checkpoint,kind):
     x,m=sequence()
@@ -138,7 +126,6 @@ def test_reader_bad_input(checkpoint,kind):
     if kind=='mask':m=m.astype(np.float32)
     if kind=='nan':x[0,1,0]=np.nan
     with pytest.raises(ValueError):FingerspellingReader(checkpoint)(x,m)
-
 
 
 @pytest.mark.parametrize('field',['feature_schema','vocabulary','model_config'])
@@ -152,10 +139,8 @@ def test_incompatible_checkpoint(checkpoint,field):
     with pytest.raises((ValueError,RuntimeError)):FingerspellingReader(wrong)
 
 
-
 def test_missing_checkpoint(tmp_path):
     with pytest.raises(FileNotFoundError):FingerspellingReader(tmp_path/'absent.pt')
-
 
 
 def test_public_function_uses_configured_checkpoint(checkpoint,monkeypatch):
@@ -165,13 +150,11 @@ def test_public_function_uses_configured_checkpoint(checkpoint,monkeypatch):
     assert read_fingerspelling(x,m)==FingerspellingReader(checkpoint)(x,m)
 
 
-
 def test_public_function_requires_configuration(monkeypatch):
     from fingerspelling_runtime import read_fingerspelling
     monkeypatch.delenv('FINGERSPELLING_CHECKPOINT',raising=False)
     with pytest.raises(RuntimeError,match='FINGERSPELLING_CHECKPOINT'):
         read_fingerspelling(*sequence())
-
 
 
 def test_grouped_split_no_fs_or_text_leak():
@@ -185,10 +168,8 @@ def test_grouped_split_no_fs_or_text_leak():
         assert not (sets[0]&sets[1] or sets[0]&sets[2] or sets[1]&sets[2])
 
 
-
 def test_insufficient_split_groups():
     with pytest.raises(ValueError):split_rows([dict(fs_id='a',text='b')]*10,2)
-
 
 
 def test_feature_roundtrip(tmp_path):
@@ -197,7 +178,6 @@ def test_feature_roundtrip(tmp_path):
     path=tmp_path/'sample.npz'
     np.savez_compressed(path,xy=x,mask=m,features=features(x,m),target=ids,t=np.arange(len(x))/15)
     assert len(feature_ok(path,dict(text='가',target_ids=ids)))==64
-
 
 
 def test_zip_alias_and_unsupported_label(tmp_path):
@@ -217,7 +197,6 @@ def test_zip_alias_and_unsupported_label(tmp_path):
     assert rows[0]['semantic_status']=='unverified' and rows[0]['performer_id'] is None
 
 
-
 def test_duplicate_alias_rejected(tmp_path):
     labels=tmp_path/'labels.zip'; videos=tmp_path/'videos.zip'
     vid='NIA_SL_FS0001_CROWD18_F'
@@ -230,7 +209,6 @@ def test_duplicate_alias_rejected(tmp_path):
     with pytest.raises(ValueError,match='duplicate_mp4'):candidates(videos,labels)
 
 
-
 @pytest.mark.parametrize('content',[b'abc',b'xy',b'xyz'])
 def test_temporary_crc_size(content,tmp_path):
     path=tmp_path/'owned.mp4'
@@ -241,7 +219,6 @@ def test_temporary_crc_size(content,tmp_path):
         with pytest.raises(ValueError):checked_temporary(path,row)
 
 
-
 def test_nfc_nfd_split_leakage():
     import unicodedata
     rows=[dict(video_id=str(i),fs_id=str(i),text=f'label{i}') for i in range(12)]
@@ -250,10 +227,8 @@ def test_nfc_nfd_split_leakage():
     assert next(name for name,items in split.items() if rows[0] in items)==next(name for name,items in split.items() if rows[1] in items)
 
 
-
 def test_constant_60fps_selects_every_fourth_frame():
     assert np.array_equal(timestamp_indices(np.arange(120)/60),np.arange(0,120,4))
-
 
 
 def test_variable_rate_uses_timestamps_without_duplicate_frames():
@@ -264,7 +239,72 @@ def test_variable_rate_uses_timestamps_without_duplicate_frames():
     assert np.all(times[indices]>=np.arange(len(indices))/15-1e-7)
 
 
-
 @pytest.mark.parametrize('times',[[0],[0,0],[0,.1,.05],[0,float('nan')],[0,float('inf')],[-.1,0]])
 def test_invalid_video_clock_rejected(times):
     with pytest.raises(ValueError):timestamp_indices(times)
+
+
+def prepare_fixture(tmp_path,monkeypatch):
+    import run_mediapipe_ctc as runner
+    from types import SimpleNamespace
+    videos=tmp_path/'input.zip'; labels=tmp_path/'labels.zip'
+    vid='NIA_SL_FS0001_CROWD18_F'
+    with zipfile.ZipFile(videos,'w') as archive:archive.writestr(vid+'.mp4',b'abcdef')
+    with zipfile.ZipFile(labels,'w') as archive:
+        document=dict(metaData=dict(name=vid+'.mp4',duration=2),
+                      data=[dict(start=0,end=1,attributes=[dict(name='가')])])
+        archive.writestr('a.json',json.dumps(document))
+    out=tmp_path/'output';(out/'features').mkdir(parents=True)
+    (out/'temp').mkdir()
+    args=SimpleNamespace(output=out,videos=videos,labels=labels,max_videos=1,seed=2,extraction_seconds=10)
+    monkeypatch.setattr(runner,'source_config',lambda args:dict(fixture=True))
+    monkeypatch.setattr(runner,'probe_video',lambda path:dict(src_fps=60,source_frames=120,
+        resolution=[1080,1920],times=np.arange(120)/60,indices=np.arange(0,120,4),cfr_error_seconds=0))
+    x,m=sequence(30)
+    monkeypatch.setattr(runner,'extract_timestamped',lambda path,probe:dict(xy=x,mask=m,
+        t=np.arange(30)/15,wh=[1920,1080],src_fps=60))
+    row=runner.candidates(videos,labels)[0][0]
+    return runner,args,row
+
+
+def test_owned_partial_retry_and_completed_resume(tmp_path,monkeypatch):
+    runner,args,row=prepare_fixture(tmp_path,monkeypatch)
+    temporary=args.output/'temp'/(row['video_id']+'.mp4')
+    temporary.write_bytes(b'abc')
+    runner.write(temporary.with_suffix('.owner.json'),dict(member=row['member'],crc=row['crc'],bytes=row['bytes']))
+    source_sha=runner.digest(args.videos)
+    state=runner.prepare(args)
+    assert len(state['completed'])==1 and not state['failed']
+    assert not temporary.exists() and list(temporary.parent.glob('*.partial-*'))
+    assert runner.digest(args.videos)==source_sha
+    path=args.output/'features'/(row['video_id']+'.npz')
+    old_sha=runner.digest(path)
+    monkeypatch.setattr(runner,'probe_video',lambda path:pytest.fail('completed video decoded again'))
+    assert len(runner.prepare(args)['completed'])==1 and runner.digest(path)==old_sha
+
+
+def test_unowned_temporary_is_preserved(tmp_path,monkeypatch):
+    runner,args,row=prepare_fixture(tmp_path,monkeypatch)
+    temporary=args.output/'temp'/(row['video_id']+'.mp4')
+    temporary.write_bytes(b'existing')
+    state=runner.prepare(args)
+    assert not state['completed'] and len(state['failed'])==1
+    assert temporary.read_bytes()==b'existing'
+
+
+def test_source_configuration_change_rejected(tmp_path,monkeypatch):
+    runner,args,row=prepare_fixture(tmp_path,monkeypatch)
+    runner.prepare(args)
+    monkeypatch.setattr(runner,'source_config',lambda args:dict(fixture=False))
+    with pytest.raises(ValueError,match='configuration_changed'):runner.prepare(args)
+
+
+def test_orphan_timestamp_change_rejected(tmp_path,monkeypatch):
+    runner,args,row=prepare_fixture(tmp_path,monkeypatch)
+    x,m=sequence(15)
+    # Same xy/features/target, different timestamps: must not adopt this orphan.
+    path=args.output/'features'/(row['video_id']+'.npz')
+    np.savez_compressed(path,xy=x,mask=m,features=features(x,m),target=row['target_ids'],t=np.arange(15)/15+.001)
+    before=runner.digest(path)
+    state=runner.prepare(args)
+    assert not state['completed'] and len(state['failed'])==1 and runner.digest(path)==before
