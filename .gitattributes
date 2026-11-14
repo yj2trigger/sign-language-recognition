@@ -1,0 +1,5 @@
+# These raw file hashes are part of the trained feature schema.
+src/fingerspelling/sequence_features.py text eol=lf
+src/fingerspelling/sequence_preprocessing.py text eol=lf
+src/fingerspelling/sequence_validation.py text eol=lf
+src/fingerspelling_hand_features.py text eol=lf
