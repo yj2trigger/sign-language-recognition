@@ -52,5 +52,51 @@ def test_face_signals_reads_brow_and_mouth():
     assert bd.face_signals(np.zeros((33, 2)), np.ones(33, bool)) is None   # 얼굴 높이 0
 
 
+# ---- 모델 단독(torch 필요) ----
+
+def test_models_ignore_future_frames():
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(0)
+    x = torch.randn(1, 80, bd.N_FEAT)
+    x2 = x.clone()
+    x2[:, 50:] = torch.randn(1, 30, bd.N_FEAT)
+    for arch in ("tcn", "gru"):
+        m = bd.build_model(arch).eval()
+        with torch.no_grad():
+            y, y2 = m(x), m(x2)
+        assert y.shape == (1, 80, 3)
+        assert torch.allclose(y[:, :50], y2[:, :50], atol=1e-5) and not torch.allclose(y[:, 50:], y2[:, 50:])
+
+
+def test_receptive_field_and_window():
+    torch = pytest.importorskip("torch")
+    tcn, gru = bd.build_model("tcn").eval(), bd.build_model("gru")
+    rf = bd.receptive_field(tcn)
+    assert rf == 61 and bd.model_window(tcn, 96) == 61 and bd.receptive_field(gru) is None and bd.model_window(gru, 96) == 96
+    with pytest.raises(ValueError):
+        bd.model_window(tcn, 40)
+    x = torch.randn(1, 100, bd.N_FEAT)
+    far, near = x.clone(), x.clone()
+    far[:, 100 - rf - 1] += 5.0                            # 범위 밖 프레임은 마지막 출력에 영향이 없다
+    near[:, 100 - rf] += 5.0                               # 범위 맨 앞 프레임은 영향이 있다
+    with torch.no_grad():
+        last = tcn(x)[0, -1]
+        assert torch.allclose(tcn(far)[0, -1], last, atol=1e-5) and not torch.allclose(tcn(near)[0, -1], last, atol=1e-5)
+
+
+def test_load_model_roundtrip_and_feature_check(tmp_path):
+    torch = pytest.importorskip("torch")
+    m = bd.build_model("tcn")
+    ck = {"state": m.state_dict(), "arch": "tcn", "n_feat": bd.N_FEAT, "feat_names": bd.FEAT_NAMES}
+    torch.save(ck, tmp_path / "m.pt")
+    m2, saved = bd.load_model(str(tmp_path / "m.pt"))
+    x = torch.randn(1, 20, bd.N_FEAT)
+    with torch.no_grad():
+        assert not m2.training and torch.allclose(m.eval()(x), m2(x)) and saved["arch"] == "tcn"
+    torch.save(dict(ck, feat_names=bd.FEAT_NAMES[:-1]), tmp_path / "old.pt")
+    with pytest.raises(ValueError):
+        bd.load_model(str(tmp_path / "old.pt"))
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
