@@ -108,7 +108,7 @@ def score(rows):
     return {"n": n, "top1": top1, "top5": top5, "top1_rate": top1 / n if n else None, "top5_rate": top5 / n if n else None}
 
 
-def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr):
+def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
     ck = torch.load(word_pt, weights_only=False)
     model = models.build(ck["model"], ck["n_feat"], len(ck["classes"]))
     model.load_state_dict(ck["state"])
@@ -132,11 +132,11 @@ def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr):
         n_true, n_pred, n_match = n_true + len(true), n_pred + len(pred), n_match + len(m)
         for s, e, w in segs:
             if w in vocab:
-                oracle.append({"video": vid, "seg": [s, e], "true": w, "pred": (classify(model, classes, cfg, d, s, e, aspect) or [None])[0]})
+                oracle.append({"video": vid, "seg": [s, e], "true": w, "pred": (classify(model, classes, cfg, d, s, e, aspect, margin) or [None])[0]})
         for i, j, v in m:
             s, e, w = segs[j]
             if w in vocab:
-                r = classify(model, classes, cfg, d, pred[i][0], pred[i][1], aspect)
+                r = classify(model, classes, cfg, d, pred[i][0], pred[i][1], aspect, margin)
                 e2e.append({"video": vid, "seg": [s, e], "pred_seg": list(pred[i]), "iou": v, "true": w, "pred": r[0] if r else None})
         # 정답과 짝지어지지 않은 정답 구간도 단어 채점 분모에 넣는다(놓친 단어 = 틀림)
         hit = {j for _, j, _ in m}
@@ -147,7 +147,7 @@ def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr):
                        "left_hand": float(mk[:, LEFT].any(1).mean()), "right_hand": float(mk[:, RIGHT].any(1).mean()),
                        "n_true": len(true), "n_pred": len(pred), "n_match": len(m),
                        "pred_segments": [[round(s, 2), round(e, 2)] for s, e in pred]})
-    return {"word_model": word_pt, "word_classes": len(classes), "boundary": boundary_spec, "iou_thr": iou_thr,
+    return {"word_model": word_pt, "word_classes": len(classes), "boundary": boundary_spec, "iou_thr": iou_thr, "margin": margin,
             "segments": {"n_true": n_true, "n_pred": n_pred, "n_match": n_match,
                          "recall": n_match / n_true if n_true else None, "precision": n_match / n_pred if n_pred else None},
             "oracle": score(oracle), "end_to_end": score(e2e), "videos": videos,
@@ -168,6 +168,7 @@ def main():
     e.add_argument("--boundary", default="rule")
     e.add_argument("--names", default="")
     e.add_argument("--iou", type=float, default=0.5)
+    e.add_argument("--margin", type=float, default=0.5, help="분류할 때 구간 앞뒤로 더 넣는 초(학습은 라벨 ±0.5초)")
     e.add_argument("--out", default="")
     g = sub.add_parser("labels-aihub")
     g.add_argument("npz_dirs", nargs="+")
@@ -179,7 +180,7 @@ def main():
         return aihub_labels(a.npz_dirs, a.label_zip, a.names, a.out)
     if a.cmd == "extract":
         return extract(a.videos, a.out_dir, a.fps)
-    res = evaluate(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou)
+    res = evaluate(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou, a.margin)
     s = res["segments"]
     print("구간: 정답 %d, 탐지 %d, 짝 %d (재현율 %s, 정밀도 %s)" % (s["n_true"], s["n_pred"], s["n_match"], s["recall"], s["precision"]))
     for k in ("oracle", "end_to_end"):
