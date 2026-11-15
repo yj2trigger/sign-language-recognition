@@ -30,7 +30,9 @@ class TemporalAugmentation:
                        preserves='order, endpoints, target, CTC minimum length',
                        recompute='interpolation, shoulder normalization, hand-local, delta')
 
-    def __init__(self, source, rows):
+    def __init__(self, source, rows, factor_range=(.9, 1.1)):
+        self.factor_range = factor_range
+        self.description = dict(self.description, factor_range=list(factor_range))
         self.raw = {}
         for row, x, y in rows:
             with np.load(source/'features'/(row['video_id']+'.npz'), allow_pickle=False) as f:
@@ -41,7 +43,7 @@ class TemporalAugmentation:
         result = []
         for row, x, y in rows:
             xy, mask = self.raw[row['video_id']]
-            indices = resample_indices(len(xy), y, float(rng.uniform(.9, 1.1)))
+            indices = resample_indices(len(xy), y, float(rng.uniform(*self.factor_range)))
             values = previous.hand_local_features(raw_features(xy[indices], mask[indices]))
             result.append((row, values, y))
         return result

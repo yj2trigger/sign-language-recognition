@@ -36,7 +36,7 @@ def training_data(source, config):
     return {k: [(r, hand_local_features(x), y) for r, x, y in rows] for k, rows in data.items()}
 
 
-def fine_tune(args, name, lr, data, baseline_cer, *, dropout=None, train_transform=None):
+def fine_tune(args, name, lr, data, baseline_cer, *, dropout=None, train_transform=None, weight_decay=.01):
     directory = args.output/name
     directory.mkdir(exist_ok=False)
     exp.seed_everything(args.seed)
@@ -46,11 +46,11 @@ def fine_tune(args, name, lr, data, baseline_cer, *, dropout=None, train_transfo
         model_config['dropout'] = dropout
     model = exp.FingerspellingCTC(exp.CTCModelConfig(**model_config))
     model.load_state_dict(saved['model_state'])
-    trainer = exp.CTCTrainer(model, exp.CTCTrainingConfig(seed=args.seed, learning_rate=lr),
+    trainer = exp.CTCTrainer(model, exp.CTCTrainingConfig(seed=args.seed, learning_rate=lr, weight_decay=weight_decay),
                              device=args.device, vocabulary=saved['vocabulary'],
                              feature_schema=saved['feature_schema'])
     zero, one = np.zeros(424, np.float32), np.ones(424, np.float32)
-    config = dict(name=name, seed=args.seed, epochs=20, lr=lr, weight_decay=.01,
+    config = dict(name=name, seed=args.seed, epochs=20, lr=lr, weight_decay=weight_decay,
                   initialization_sha256=exp.base.digest(args.checkpoint), optimizer='fresh AdamW',
                   implementation_sha256=exp.base.digest(__file__),
                   model_config=model_config, augmentation=getattr(train_transform, 'description', None),
@@ -77,6 +77,7 @@ def fine_tune(args, name, lr, data, baseline_cer, *, dropout=None, train_transfo
         print(name, epoch+1, val['jamo_cer'], flush=True)
     selected = min(history, key=lambda h: (h['validation']['jamo_cer'], h['validation_loss'], h['epoch']))
     result = dict(config=config, selected_epoch=selected['epoch'], validation=selected['validation'],
+                  training_seconds=sum(h['seconds'] for h in history),
                   improved=best[2]>0, status='success', performer_independent=False,
                   checkpoint=str(directory/'improved.pt') if best[2]>0 else None)
     if best[2]>0:
