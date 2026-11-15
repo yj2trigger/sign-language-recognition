@@ -24,6 +24,7 @@ def test_invalid_speed_rejected(factor):
 
 def test_augmentation_recomputes_features_is_repeatable_and_does_not_mutate(monkeypatch):
     augment=object.__new__(stage.TemporalAugmentation)
+    augment.factor_range=(.9,1.1)
     xy=np.arange(20*53*2,dtype=np.float32).reshape(20,53,2)
     mask=np.ones((20,53),bool)
     augment.raw={'train':(xy,mask)}
