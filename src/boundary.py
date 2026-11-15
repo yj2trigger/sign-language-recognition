@@ -550,6 +550,32 @@ def summarize(results):
             "sentence_end_latency_median_s": float(np.median(slat)) if slat else None}
 
 
+def sentence_end_stats(events, true_segments):
+    """문장 하나짜리 영상에서 flush 없이(run_stream(..., flush=False)) 얻은 이벤트로 문장 끝을 따진다.
+
+    flush 는 영상이 끝날 때 남은 문장을 강제로 닫으므로, 그것까지 세면 문장 끝을 항상 알린 것처럼 보인다.
+
+    Args:
+        events (list): run_stream(..., flush=False) 결과 [(알린 시각, 시작, 끝, 종류)].
+        true_segments (list[tuple[float, float, str]]): 정답 단어 구간. 비어 있으면 안 된다.
+
+    Returns:
+        dict: in_video (bool, 영상이 끝나기 전에 문장 끝을 한 번이라도 알렸나),
+        mid_false (int, 정답 마지막 단어가 끝나기 전에 알린 문장 끝 수 = 문장 중간 오알림),
+        latency_s (float | None, 첫 문장 끝 알림 시각 - 정답 마지막 단어 끝).
+
+    Examples:
+        >>> sentence_end_stats([(3.0, 0.5, 2.0, "sentence_end")], [(0.5, 2.0, "word")])
+        {'in_video': True, 'mid_false': 0, 'latency_s': 1.0}
+    """
+    if not true_segments:
+        raise ValueError("정답 단어 구간이 비어 있다")
+    last = max(e for _, e, _ in true_segments)
+    sent = [e[0] for e in events if e[3] == "sentence_end"]
+    return {"in_video": bool(sent), "mid_false": sum(t < last for t in sent),
+            "latency_s": float(sent[0] - last) if sent else None}
+
+
 # ---- 실험 기록: logs/sign-language/trials.md 에 T-번호 항목을 덧붙인다 ----
 
 def format_trial(tid, title, hypothesis, attempt, result, decision, date=None):

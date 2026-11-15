@@ -16,6 +16,7 @@
 
 - 가설: 의사 문장 점수(T-002, 구간 F1 0.988)는 실제 문장에서 유지되지 않으며, 실제 문장으로 학습하면 처음 보는 수행자에서도 단어를 나눌 수 있다
 - 시도: AI-Hub 문장 영상 정면, 수행자 1·2·3(1,061·969·994문장), 형태소 라벨 시각만 사용. 의사 문장 모델을 수행자 1에 평가. train_boundary.py --real-train <02> [<03>] --real-test <01>, 시드 0~4. 결과 runs/boundary/real/real-tcn-*.json
+- 재현: 수행자마다 `python src/extract_sentences.py "[원천]NN_real_sen_video.zip" "[라벨]01_real_sen_morpheme.zip" --out <레포 밖>/real_sen_0N` (01=수행자 1, 03=수행자 2, 05=수행자 3) → `python src/train_boundary.py --real-train <real_sen_02>/features <real_sen_03>/features --real-test <real_sen_01>/features --seed 0 --save-model <레포 밖>/boundary-real-tr0203-s0.pt`
 - 결과: 의사 문장 모델(폴드 1)의 수행자 1 구간 F1 0.36~0.44, 규칙 0.08. 수행자 2로 학습: 구간 F1 0.803±0.015(시드 5개), 프레임 F1 0.891, 지연 중앙값 171 ms. 의사 문장 1,000개를 섞으면 0.783(나빠짐). 수행자 2·3으로 학습: 구간 F1 0.815, IoU 0.745, 지연 중앙값 204 ms(p95 507 ms). 최종 모델은 수행자 1·2·3 전부로 학습(시험 수행자 없음, 레포 밖 models/boundary-final-tr010203-s0.pt)
 - 판단: (작성자가 채울 것)
 
@@ -23,6 +24,7 @@
 
 - 가설: 새 단어 시작 문턱(begin_thr)을 낮추면 합쳐진 단어가 줄고, 표정 단서는 실제 문장에서 문장 끝 판정을 방해한다
 - 시도: 수행자 2·3 검증 문장(196개)으로 begin_thr 0.2~0.5, face_ref, 표정 단서 끔, max_pause_s 1.2 비교. 고른 값을 수행자 1(1,061문장)로 확인. 문장 끝은 영상이 끝나기 전에 알린 비율로 셈(이전의 '문장 끝 1회 비율 1.00'은 영상 끝 강제 종료를 포함한 값). 결과 runs/boundary/real/retune-tr0203-te01.json
+- 재현: 검증 `python src/eval_boundary.py <boundary-real-tr0203-s0.pt> <real_sen_02>/features <real_sen_03>/features --val-seed 0 --begin-thr 0.2,0.3,0.4,0.5 --max-pause 1.6 --face-cue 1` 과 `... --val-seed 0 --begin-thr 0.5 --max-pause 1.6,1.2 --face-cue 1,0`, 시험 `python src/eval_boundary.py <boundary-real-tr0203-s0.pt> <real_sen_01>/features --begin-thr 0.5 --max-pause 1.6 --face-cue 1` 과 `... --begin-thr 0.3 --max-pause 1.2 --face-cue 0` (2026-11-15 다시 돌려 위 수치가 그대로 나옴)
 - 결과: 검증에서 begin_thr 0.3(구간 F1 0.913), 표정 단서 끔 + max_pause_s 1.2(영상 안 문장 끝 0.597 → 0.821) 선택. 수행자 1: 구간 F1 0.815 → 0.844, 지연 중앙값 204 → 185 ms, 영상 안 문장 끝 0.765 → 0.943, 문장 중간 오알림 1 → 1. DetectorConfig 기본값과 두 모델 파일의 설정을 새 값으로 바꿈(face_cue 로 표정 단서를 다시 켤 수 있음)
 - 아직 모름: 문장을 이어서 할 때의 문장 끝(데이터가 한 파일 한 문장), 지문자 구분(규칙 기반, 실제 라벨로 검증 안 함)
 - 판단: (작성자가 채울 것)
