@@ -36,12 +36,15 @@ def training_data(source, config):
     return {k: [(r, hand_local_features(x), y) for r, x, y in rows] for k, rows in data.items()}
 
 
-def fine_tune(args, name, lr, data, baseline_cer):
+def fine_tune(args, name, lr, data, baseline_cer, *, dropout=None, train_transform=None):
     directory = args.output/name
     directory.mkdir(exist_ok=False)
     exp.seed_everything(args.seed)
     saved = exp.load_checkpoint(args.checkpoint)
-    model = exp.FingerspellingCTC(exp.CTCModelConfig(**saved['model_config']))
+    model_config = dict(saved['model_config'])
+    if dropout is not None:
+        model_config['dropout'] = dropout
+    model = exp.FingerspellingCTC(exp.CTCModelConfig(**model_config))
     model.load_state_dict(saved['model_state'])
     trainer = exp.CTCTrainer(model, exp.CTCTrainingConfig(seed=args.seed, learning_rate=lr),
                              device=args.device, vocabulary=saved['vocabulary'],
@@ -50,6 +53,7 @@ def fine_tune(args, name, lr, data, baseline_cer):
     config = dict(name=name, seed=args.seed, epochs=20, lr=lr, weight_decay=.01,
                   initialization_sha256=exp.base.digest(args.checkpoint), optimizer='fresh AdamW',
                   implementation_sha256=exp.base.digest(__file__),
+                  model_config=model_config, augmentation=getattr(train_transform, 'description', None),
                   features='unchanged hand-local incl. delta, folded baseline affine', batch_size=8,
                   selection='validation CER then loss then earlier epoch', test_evaluated=False)
     exp.base.write(directory/'config.json', config)
@@ -58,7 +62,8 @@ def fine_tune(args, name, lr, data, baseline_cer):
     for epoch in range(20):
         tick = time.perf_counter()
         order = np.random.default_rng(args.seed*1000+epoch).permutation(len(data['train']))
-        trainer.fit(lambda: exp.batches(data['train'], zero, one, order),
+        train_rows = data['train'] if train_transform is None else train_transform(data['train'], epoch, args.seed)
+        trainer.fit(lambda: exp.batches(train_rows, zero, one, order),
                     lambda: exp.batches(data['validation'], zero, one), epochs=1,
                     checkpoint_dir=directory/'training')
         val = exp.score(model, data['validation'], trainer.device, zero, one)
