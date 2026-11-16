@@ -97,8 +97,19 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
     """클립 -> (X (N, length, F), y (N,), signer (N,)). rng 를 주면 증강을 적용한다. 어깨가 한 번도 안 보인 클립은 뺀다.
     fps_ratio != 1 이면(증강을 안 쓸 때) 모든 클립의 프레임을 그 비율로 건너뛰어 낮은 fps 카메라를 흉내 낸다(평가용).
     face 면 얼굴 33점을 53점 뒤에 붙여 같은 증강(자르기·잡음·회전·결측)을 받게 한 뒤 얼굴 특징 73채널을 더한다."""
-    index = {w: i for i, w in enumerate(classes)}
     X, y, sg = [], [], []
+    for f, w, s in _iter_features(clips, classes, length, with_hand_rel, rng, fps_ratio, fps_aug, angles, traj, pos_aug,
+                                  bones, origin, hand_z, folds, face):
+        X.append(f)
+        y.append(w)
+        sg.append(s)
+    return np.stack(X), np.array(y, dtype=np.int64), np.array(sg)     # Windows 의 numpy 기본 정수는 int32 라 torch 손실 함수가 거부한다
+
+
+def _iter_features(clips, classes, length, with_hand_rel, rng, fps_ratio, fps_aug, angles, traj, pos_aug, bones, origin,
+                   hand_z, folds, face):
+    """클립마다 (특징, 클래스 번호, 수행자)를 하나씩 낸다. 어깨가 한 번도 안 보인 클립은 건너뛴다."""
+    index = {w: i for i, w in enumerate(classes)}
     for c in clips:
         z = c.get("z") if hand_z else None
         if hand_z and z is None:
@@ -119,26 +130,30 @@ def to_arrays(clips, classes, length, with_hand_rel=True, rng=None, fps_ratio=1.
                               with_bones=bones, origin=origin, z=out[2] if hand_z else None,
                               aspect=c.get("aspect", 16 / 9), with_hand_z=hand_z,
                               with_folds=folds, with_face=face)
-        if f is None:
-            continue
-        X.append(f)
-        y.append(index[c["word"]])
-        sg.append(c["signer"])
-    return np.stack(X), np.array(y, dtype=np.int64), np.array(sg)     # Windows 의 numpy 기본 정수는 int32 라 torch 손실 함수가 거부한다
+        if f is not None:
+            yield f, index[c["word"]], c["signer"]
 
 
 def augmented_bank(clips, classes, length, with_hand_rel, k, seed, fps_aug=False, angles=False, traj=False, pos_aug=False,
                    bones=False, origin="shoulder", hand_z=False, folds=False, face=False, dtype=np.float32):
     """증강본을 k 벌 미리 만든다. 반환: (Xb (k, N, length, F), y (N,)). 학습 때 에폭마다 표본별로 한 벌을 고른다.
     매 에폭 새로 증강하면 특징 계산이 병목이라서 한 번만 만들고, 모든 모델·시드가 같은 증강본을 쓰게 한다."""
+    # 결과 배열을 처음에 한 번 잡고 클립마다 바로 채운다. 벌마다 목록 → stack → astype 사본, 끝에 np.stack(banks) 사본을
+    # 만들던 때는 순간 최대가 결과의 약 2배(3,000단어 fp16 에서 약 8 GB)라 다른 작업과 같이 돌리면 메모리 부족이 났다.
+    # 같은 rng·같은 순서·같은 형 변환이라 값은 예전과 비트 단위로 같다(tests/test_bank_prealloc.py).
     rng = np.random.default_rng(seed)
-    banks = []
-    for _ in range(k):
-        X, y, _ = to_arrays(clips, classes, length, with_hand_rel, rng=rng, fps_aug=fps_aug,
-                            angles=angles, traj=traj, pos_aug=pos_aug, bones=bones, origin=origin, hand_z=hand_z,
-                            folds=folds, face=face)
-        banks.append(X.astype(dtype, copy=False))   # float16 이면 메모리 절반(1,500단어 bank 가 RAM 을 넘어서)
-    return np.stack(banks), y
+    Xb, y = None, None
+    for b in range(k):
+        yb = []
+        for f, w, _ in _iter_features(clips, classes, length, with_hand_rel, rng, 1.0, fps_aug, angles, traj, pos_aug,
+                                      bones, origin, hand_z, folds, face):
+            if Xb is None:
+                Xb = np.empty((k, len(clips)) + f.shape, dtype)   # float16 이면 메모리 절반
+            Xb[b, len(yb)] = f
+            yb.append(w)
+        y = yb
+    y = np.array(y, dtype=np.int64)
+    return Xb[:, :len(y)], y        # 건너뛴 클립 몫만큼 잘라낸 뷰(복사 없음)
 
 
 def make_folds(signers, n_folds, seed=0):
