@@ -78,7 +78,8 @@ def render(t, xy, mask, face, face_mask, out_path, aspect=16 / 9, scale=720, fps
            title="", ev=(), names=None):
     """t 가 불규칙(버린 프레임)이어도 시각대로 재생한다: 출력 프레임마다 그 시각 직전의 가장 가까운 프레임을 쓴다."""
     names, size = names or {}, (int(round(scale * aspect)), scale)
-    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
+    codec = "VP80" if out_path.endswith(".webm") else "mp4v"     # .webm(VP8)은 브라우저에서 바로 재생된다
+    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*codec), fps, size)
     n_out, n_hold, n = int(round((t[-1] - t[0]) / speed * fps)) + 1, int(round(hold_s * fps)), 0
     for _ in range(loops):
         for j in range(n_out + n_hold):
