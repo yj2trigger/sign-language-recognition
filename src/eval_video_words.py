@@ -203,7 +203,9 @@ def sentences(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5, post
             "rows": rows}
 
 
-def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
+def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5, post=None):
+    """post: segment_post.PostConfig 를 주면 탐지 구간을 후처리(①②)하고, 분류한 뒤 같은 단어 연속을 합친(③) 구간으로 짝짓는다.
+    지문자로 판정된 구간은 단어 예측이 없는 것(틀림)으로 센다."""
     model, classes, cfg, vocab = load_word(word_pt)
     det = bd.BoundaryDetector(None if boundary_spec == "rule" else boundary_spec)
     oracle, e2e, videos = [], [], []
@@ -216,7 +218,14 @@ def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
         z = np.load(path)
         d, aspect = load_npz(path)
         ev = bd.run_stream(det, d["t"], d["xy"], d["mask"], d["face"], d["face_mask"])
-        pred = [(s, e) for _, s, e, *k in ev if (k[0] if k else "word") != "sentence_end"]
+        found = [(s, e, k[0] if k else "word") for _, s, e, *k in ev if (k[0] if k else "word") != "sentence_end"]
+        top5 = None
+        if post is not None:
+            found = sp.apply(found, d["t"], d["xy"], d["mask"], post)
+            t5 = {s: ((classify(model, classes, cfg, d, s, e, aspect, margin) or [None])[0] if k == "word" else None) for s, e, k in found}
+            items = sp.dedup([(s, e, k, t5[s][0] if t5[s] else None) for s, e, k in found], post)
+            found, top5 = [(s, e, k) for s, e, k, _ in items], [t5[s] for s, _, _, _ in items]
+        pred = [(s, e) for s, e, _ in found]
         true = [(s, e) for s, e, _ in segs]
         m = bd.match_segments(pred, true, iou_thr)
         n_true, n_pred, n_match = n_true + len(true), n_pred + len(pred), n_match + len(m)
@@ -226,8 +235,12 @@ def evaluate(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
         for i, j, v in m:
             s, e, w = segs[j]
             if w in vocab:
-                r = classify(model, classes, cfg, d, pred[i][0], pred[i][1], aspect, margin)
-                e2e.append({"video": vid, "seg": [s, e], "pred_seg": list(pred[i]), "iou": v, "true": w, "pred": r[0] if r else None})
+                if top5 is not None:
+                    p5 = top5[i]
+                else:
+                    r = classify(model, classes, cfg, d, pred[i][0], pred[i][1], aspect, margin)
+                    p5 = r[0] if r else None
+                e2e.append({"video": vid, "seg": [s, e], "pred_seg": list(pred[i]), "iou": v, "true": w, "pred": p5})
         # 정답과 짝지어지지 않은 정답 구간도 단어 채점 분모에 넣는다(놓친 단어 = 틀림)
         hit = {j for _, j, _ in m}
         e2e += [{"video": vid, "seg": [s, e], "true": w, "pred": None, "missed": True}
@@ -260,6 +273,7 @@ def main():
     e.add_argument("--iou", type=float, default=0.5)
     e.add_argument("--margin", type=float, default=0.5, help="분류할 때 구간 앞뒤로 더 넣는 초(학습은 라벨 ±0.5초)")
     e.add_argument("--out", default="")
+    e.add_argument("--post", default="", help="구간 후처리(segment_post.PostConfig), sentences 와 같은 형식")
     g = sub.add_parser("labels-aihub")
     g.add_argument("npz_dirs", nargs="+")
     g.add_argument("--label-zip", required=True)
@@ -289,7 +303,9 @@ def main():
         return aihub_labels(a.npz_dirs, a.label_zip, a.names, a.out)
     if a.cmd == "extract":
         return extract(a.videos, a.out_dir, a.fps)
-    res = evaluate(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou, a.margin)
+    res = evaluate(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou, a.margin,
+                   sp.PostConfig.parse(a.post) if a.post else None)
+    res["post"] = a.post
     s = res["segments"]
     print("구간: 정답 %d, 탐지 %d, 짝 %d (재현율 %s, 정밀도 %s)" % (s["n_true"], s["n_pred"], s["n_match"], s["recall"], s["precision"]))
     for k in ("oracle", "end_to_end"):
