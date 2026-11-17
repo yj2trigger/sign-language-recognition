@@ -11,6 +11,7 @@
 """
 import argparse
 import csv
+import os
 import time
 
 import cv2
@@ -136,8 +137,10 @@ def make_segmenter(spec):
     return boundary.BoundaryDetector(None if spec == "rule" else spec)
 
 
-def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_s=10.0):
-    """루프 본체. 반환: (결과 [(영상 시각 끝, 단어, 확률, 지연 ms)], 프레임 처리 ms 목록, 버린 프레임 수)."""
+def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_s=10.0, margin=0.5, fs_reader=None):
+    """루프 본체. 반환: (결과 [(영상 시각 끝, 단어, 확률, 지연 ms)], 프레임 처리 ms 목록, 버린 프레임 수).
+    margin: 분류할 때 구간 앞뒤로 더 넣는 초(학습은 ±0.5초, 이어서 수어하면 0이 낫다 — T-061).
+    fs_reader: (xy, mask) -> 글자열. 주면 탐지기가 지문자로 판정한 구간은 단어 분류 대신 여기로 보낸다."""
     segmenter = segmenter or HandRaiseSegmenter()
     seg_face = getattr(segmenter, "uses_face", False)   # BoundaryDetector 는 얼굴을 문장 끝 보조 단서로 쓴다
     face = cfg.get("face", False) or seg_face            # 분류기·탐지기 중 하나라도 쓰면 얼굴을 뽑는다(버퍼 b[3], b[4])
@@ -164,8 +167,13 @@ def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_
             seg = feed_segmenter(segmenter, tick, r, seg_face)
             if seg and len(seg) == 3 and seg[2] == "sentence_end":     # boundary.BoundaryDetector 의 문장 끝 알림
                 print("%7.2f초  [문장 끝] %.2f~%.2f초" % (tick, seg[0], seg[1]), flush=True)
+            elif seg and fs_reader and len(seg) == 3 and seg[2] == "fingerspelling":
+                sel = [b for b in buf if seg[0] <= b[0] <= seg[1]]
+                text = fs_reader(np.stack([b[1] for b in sel]), np.stack([b[2] for b in sel])) if len(sel) >= 2 else ""
+                print("%7.2f초  [지문자] %s  구간 %.2f~%.2f초  지연 %.0f ms" % (
+                    tick, text or "(인식 실패)", seg[0], seg[1], (time.perf_counter() - t0 - seg[1]) * 1000), flush=True)
             elif seg:
-                word, prob = classify(model, classes, cfg, buf, seg[0], seg[1])
+                word, prob = classify(model, classes, cfg, buf, seg[0], seg[1], margin)
                 lat = (time.perf_counter() - t0 - seg[1]) * 1000
                 out.append((seg[1], word, prob, lat))
                 label = names.get(word, word) if names else word
@@ -183,7 +191,12 @@ def main():
     ap.add_argument("--names", default="", help="단어 번호,이름 CSV(없으면 번호로 출력)")
     ap.add_argument("--boundary", default="", help="구간 탐지기: 비우면 손 높이 규칙, rule 이면 BoundaryDetector 규칙 모드, "
                                                    "그 밖은 train_boundary.py 가 저장한 .pt")
+    ap.add_argument("--margin", type=float, default=0.5, help="분류할 때 구간 앞뒤로 더 넣는 초(이어서 수어하면 0 권장)")
     a = ap.parse_args()
+    fs_reader = None
+    if os.environ.get("FINGERSPELLING_CHECKPOINT"):     # 지문자 인식기(팀원 C, feat/2-performance-stage3 의 src 를 PYTHONPATH 에)
+        from fingerspelling_runtime import read_fingerspelling as fs_reader
+        print("지문자 인식기:", os.environ["FINGERSPELLING_CHECKPOINT"], flush=True)
     model, classes, cfg = load_model(a.model)
     segmenter = make_segmenter(a.boundary)
     if a.boundary:
@@ -193,7 +206,8 @@ def main():
         with open(a.names, encoding="utf-8-sig") as f:
             names = {int(r[0]): r[1] for r in csv.reader(f) if r and r[0].isdigit()}
     source = CameraClock(a.camera) if a.camera is not None else VideoClock(a.videos)
-    out, proc, dropped = run(source, model, classes, cfg, a.fps, segmenter=segmenter, names=names)
+    out, proc, dropped = run(source, model, classes, cfg, a.fps, segmenter=segmenter, names=names, margin=a.margin,
+                             fs_reader=fs_reader)
     lat = [o[3] for o in out]
     print("단어 %d개, 프레임 %d장 처리(버림 %d), MediaPipe 중앙값 %.1f ms·p95 %.1f ms" % (
         len(out), len(proc), dropped, np.median(proc), np.percentile(proc, 95)))
