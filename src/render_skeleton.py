@@ -29,9 +29,9 @@ def _edges(frame_xy, frame_mask, pairs, offset, color, img, size):
             cv2.line(img, p, q, color, 3, cv2.LINE_AA)
 
 
-def draw_frame(xy, mask, face, face_mask, size):
-    """한 프레임을 검은 화면에 그린다. size = (너비, 높이) 픽셀."""
-    img = np.zeros((size[1], size[0], 3), np.uint8)
+def draw_frame(xy, mask, face, face_mask, size, base=None):
+    """한 프레임을 검은 화면(또는 base: 같은 크기의 BGR 이미지, 예: 카메라 화면)에 그린다. size = (너비, 높이) 픽셀."""
+    img = np.zeros((size[1], size[0], 3), np.uint8) if base is None else base
     _edges(xy, mask, BODY, 0, WHITE, img, size)
     _edges(xy, mask, HAND, 11, LEFT, img, size)
     _edges(xy, mask, HAND, 32, RIGHT, img, size)

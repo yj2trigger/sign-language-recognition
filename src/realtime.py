@@ -186,7 +186,7 @@ class LiveScorer:
     def __init__(self, session, expected, sentence, names=None):
         self.session, self.exp, self.sentence, self.names = session, list(expected), sentence, names or {}
         self.i = self.hit = 0
-        self.tokens, self.cur, self.reps = [], [], []
+        self.tokens, self.cur, self.reps, self.hist = [], [], [], []   # hist: 단어 세션 [(인식, 정답, 맞음)] (시연 화면이 읽음)
 
     def name(self, w):
         return "지문자" if w == "FS" else ("(분류 실패)" if w is None else self.names.get(w, "번호 %s" % w))
@@ -206,6 +206,7 @@ class LiveScorer:
         want = self.exp[self.i]
         ok = w == want
         self.hit, self.i = self.hit + ok, self.i + 1
+        self.hist.append((w, want, ok))
         msg = "    → %s  %s   누적 %d/%d 맞음" % (self.name(w), "[맞음]" if ok else "[틀림] 정답: %s" % self.name(want), self.hit, self.i)
         if self.i < len(self.exp):
             msg += "\n[%d/%d] 다음: %s" % (self.i + 1, len(self.exp), self.name(self.exp[self.i]))
@@ -234,8 +235,8 @@ class LiveScorer:
 
 
 def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_s=20.0, margin=0.5, fs_reader=None, rec=None,
-        post=None, scorer=None):
-    """루프 본체. 반환: (결과 [(영상 시각 끝, 단어, 확률, 지연 ms)], 프레임 처리 ms 목록, 버린 프레임 수).
+        post=None, scorer=None, ui=None):
+    """루프 본체. ui: demo_ui.DemoUI(시연 화면, q 로 끝냄). 반환: (결과 [(영상 시각 끝, 단어, 확률, 지연 ms)], 프레임 처리 ms 목록, 버린 프레임 수).
     margin: 분류할 때 구간 앞뒤로 더 넣는 초(학습은 ±0.5초, 이어서 수어하면 0이 낫다 — T-061).
     fs_reader: (xy, mask) -> 글자열. 주면 탐지기가 지문자로 판정한 구간은 단어 분류 대신 여기로 보낸다.
     rec: dict 를 주면 rec['on'] 이 참일 때 프레임마다 시각·관절 53점·얼굴 33점(영상 화면은 저장하지 않음)과 인식 결과를 쌓는다.
@@ -247,16 +248,19 @@ def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_
     rec.update(t=[], xy=[], mask=[], face=[], face_mask=[], ev=[], wh=None, dropped=0)
     out, proc_ms = [], []
     try:
-        _loop(source, model, classes, cfg, fps, segmenter, names or {}, keep_s, margin, fs_reader, rec, out, proc_ms, post, scorer)
+        _loop(source, model, classes, cfg, fps, segmenter, names or {}, keep_s, margin, fs_reader, rec, out, proc_ms, post, scorer, ui)
     except KeyboardInterrupt:
         print("중단(Ctrl+C) — 지금까지의 결과를 정리합니다", flush=True)
+    finally:
+        if ui is not None:
+            ui.close()
     if scorer is not None:
         print(scorer.final_line(), flush=True)
         rec["score"] = scorer.summary()
     return out, proc_ms, rec["dropped"]
 
 
-def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs_reader, rec, out, proc_ms, post, scorer):
+def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs_reader, rec, out, proc_ms, post, scorer, ui=None):
     on = bool(rec.get("on"))
     seg_face = getattr(segmenter, "uses_face", False)   # BoundaryDetector 는 얼굴을 문장 끝 보조 단서로 쓴다
     face = cfg.get("face", False) or seg_face or on      # 분류기·탐지기·녹화 중 하나라도 쓰면 얼굴을 뽑는다(버퍼 b[3], b[4])
@@ -282,6 +286,8 @@ def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs
             event(kind, seg, tick, text=text)
             if scorer:
                 say(scorer.on_token("FS"))
+            if ui:
+                ui.fs(text, lat)
             return
         word, prob = classify(model, classes, cfg, buf, s, e, margin)
         if post is not None and post.dedup_gap_s and word is not None and word == last["w"] and s - last["e"] <= post.dedup_gap_s:
@@ -293,6 +299,8 @@ def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs
         event(kind, seg, tick, word, prob)
         if scorer:
             say(scorer.on_token(word))
+        if ui:
+            ui.word(word, prob, lat)
 
     if scorer:
         say(scorer.start_line())
@@ -301,14 +309,15 @@ def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs
         t0 = clock["t0"] = time.perf_counter()
         try:
             _frames(source, h, fps, segmenter, keep_s, rec, on, seg_face, face, buf, proc_ms, stream, handle, event, scorer, say,
-                    last, t0)
+                    last, t0, ui)
         finally:
             if stream is not None:                       # 멈출 때 모아 둔 구간도 내보낸다
                 for x in stream.flush(buf):
                     handle(x, buf[-1][0] if buf else tick)
 
 
-def _frames(source, h, fps, segmenter, keep_s, rec, on, seg_face, face, buf, proc_ms, stream, handle, event, scorer, say, last, t0):
+def _frames(source, h, fps, segmenter, keep_s, rec, on, seg_face, face, buf, proc_ms, stream, handle, event, scorer, say, last, t0,
+            ui=None):
     """프레임 박자 루프: 추출 → 버퍼·녹화 → 구간 탐지 → (후처리) → handle. 문장 끝이면 모아 둔 구간을 먼저 내보낸다."""
     dropped, k = 0, 0
     while True:
@@ -351,6 +360,12 @@ def _frames(source, h, fps, segmenter, keep_s, rec, on, seg_face, face, buf, pro
             last["w"] = None
             if scorer:
                 say(scorer.on_sentence_end())
+            if ui:
+                ui.sentence_end()
+        if ui and not ui.frame(frame, r[0], r[1], r[4] if face else None, r[5] if face else None,
+                               getattr(segmenter, "start", None) is not None, tick):
+            print("시연 화면에서 끝내기", flush=True)
+            break
         k += 1
 
 
@@ -381,6 +396,9 @@ def main():
     ap.add_argument("--post", default="", help="구간 후처리(segment_post.PostConfig), 예: frag_s=0.5,gap_s=0.1,fs_gap_s=0.5,fs_min_s=1.0,fs_ratio=1.5,dedup_gap_s=0.3")
     ap.add_argument("--script", default="", help="시험 대본 json(연습 자료의 script.json). --session 과 함께 주면 실시간으로 채점한다")
     ap.add_argument("--session", default="", help="A1·A2(단어 하나씩) 또는 S1~S4(문장)")
+    ap.add_argument("--ui", action="store_true", help="시연 화면(관절 + 대본·결과·점수 패널). 창에서 q 로 끝낸다")
+    ap.add_argument("--show-camera", action="store_true", help="시연 화면 왼쪽에 실제 카메라를 깔고 관절을 겹친다(기본은 관절만)")
+    ap.add_argument("--demo-video", default="", help="시연 화면을 이 mp4 로 저장")
     a = ap.parse_args()
     post = sp.PostConfig.parse(a.post) if a.post else None
     scorer = None
@@ -404,8 +422,14 @@ def main():
         scorer.names = names
     source = CameraClock(a.camera) if a.camera is not None else VideoClock(a.videos)
     rec = {"on": bool(a.record)}
+    ui = None
+    if a.ui or a.demo_video:
+        from demo_ui import DemoUI
+        ui = DemoUI(names, scorer, show_camera=a.show_camera, video_path=a.demo_video, fps=a.fps, window=a.ui)
     out, proc, dropped = run(source, model, classes, cfg, a.fps, segmenter=segmenter, names=names, margin=a.margin,
-                             fs_reader=fs_reader, rec=rec, post=post, scorer=scorer)
+                             fs_reader=fs_reader, rec=rec, post=post, scorer=scorer, ui=ui)
+    if a.demo_video:
+        print("시연 영상 저장: %s (%d프레임)" % (a.demo_video, ui.n_written), flush=True)
     if a.record and rec["t"]:
         save_recording(rec, a.record, a.fps)
         print("관절 녹화 저장: %s (%d프레임, 인식 결과 %d건)" % (a.record, len(rec["t"]), len(rec["ev"])), flush=True)
