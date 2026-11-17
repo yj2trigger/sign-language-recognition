@@ -25,6 +25,7 @@ import torch
 
 import boundary as bd
 import models
+import segment_post as sp
 import preprocess as pp
 
 LEFT, RIGHT = slice(11, 32), slice(32, 53)        # landmarks.py 점 순서: 상체 11 + 왼손 21 + 오른손 21
@@ -132,11 +133,34 @@ def edit_distance(a, b):
     return d[-1]
 
 
-def sentences(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
+def sentence_row(vid, segs, found, vocab, top1, post=None, t=None, xy=None, mask=None, mot=None):
+    """영상 하나 채점. segs = 정답 [(시작, 끝, 번호)], found = 탐지 구간 [(시작, 끝, 종류)](문장 끝 제외),
+    top1(s, e) -> 단어 번호 또는 None. post(segment_post.PostConfig)를 주면 분류 전후 후처리를 한다."""
+    if post is not None:
+        found = sp.apply(found, t, xy, mask, post, mot)
+    items = [(s, e, k, top1(s, e) if k == "word" else None) for s, e, k in found]
+    if post is not None:
+        items = sp.dedup(items, post)
+    pred = ["FS" if k == "fingerspelling" else w for _, _, k, w in items]
+    segs = sorted(segs)
+    gold = [w if w in vocab else -1 for _, _, w in segs]
+
+    def owner(s, e):                # 가장 많이 겹치는 정답 구간 번호(겹침 없으면 None)
+        ov = [max(0.0, min(e, ge) - max(s, gs)) for gs, ge, _ in segs]
+        return int(np.argmax(ov)) if ov and max(ov) > 0 else None
+    own = [owner(s, e) for s, e, _, _ in items]
+    pv = [p for p, j in zip(pred, own) if j is None or gold[j] >= 0]   # 어휘 밖 단어 안에서 나온 예측은 뺀다
+    gv = [g for g in gold if g >= 0]
+    return {"video": vid, "gold": gold, "pred": pred, "n_gold": len(gold), "n_vocab": len(gv),
+            "ed_all": edit_distance(pred, gold), "ed_vocab": edit_distance(pv, gv),
+            "n_fs": sum(k == "fingerspelling" for _, _, k, _ in items)}
+
+
+def sentences(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5, post=None):
     """문장 영상 하나 = 문장 하나를 끝까지 돌려 단어 번호 열로 내고 정답 열과 비교(번역의 글로스 단계).
     탐지 구간 종류: word → 단어 모델 상위 1, fingerspelling → "FS"(지문자 인식기 미연결), sentence_end → 세기만.
     wer_all: 정답 전체(어휘 밖 단어는 맞힐 수 없음) 기준. wer_vocab: 어휘 밖 정답 구간과, 그 구간과 가장 많이 겹치는 탐지 구간을
-    양쪽에서 빼고 잰 값(어휘 밖 단어를 여러 조각으로 잘라도 단어 모델 탓으로 세지 않음)."""
+    양쪽에서 빼고 잰 값(어휘 밖 단어를 여러 조각으로 잘라도 단어 모델 탓으로 세지 않음). post: segment_post.PostConfig(T-068)."""
     model, classes, cfg, vocab = load_word(word_pt)
     det = bd.BoundaryDetector(None if boundary_spec == "rule" else boundary_spec)
     rows = []
@@ -145,25 +169,13 @@ def sentences(npz_dir, labels, word_pt, boundary_spec, iou_thr, margin=0.5):
         if not os.path.exists(path):
             continue
         d, aspect = load_npz(path)
-        segs = sorted(segs)
         ev = bd.run_stream(det, d["t"], d["xy"], d["mask"], d["face"], d["face_mask"])
         kinds = [(s, e, k[0] if k else "word") for _, s, e, *k in ev]
         found = [(s, e, k) for s, e, k in kinds if k != "sentence_end"]
-        pred = []
-        for s, e, k in found:
-            r = classify(model, classes, cfg, d, s, e, aspect, margin) if k == "word" else None
-            pred.append("FS" if k == "fingerspelling" else (r[0][0] if r else None))
-        gold = [w if w in vocab else -1 for _, _, w in segs]
-        def owner(s, e):            # 가장 많이 겹치는 정답 구간 번호(겹침 없으면 None)
-            ov = [max(0.0, min(e, ge) - max(s, gs)) for gs, ge, _ in segs]
-            return int(np.argmax(ov)) if ov and max(ov) > 0 else None
-        own = [owner(s, e) for s, e, _ in found]
-        pv = [p for p, j in zip(pred, own) if j is None or gold[j] >= 0]   # 어휘 밖 단어 안에서 나온 예측은 뺀다
-        gv = [g for g in gold if g >= 0]
-        rows.append({"video": vid, "gold": gold, "pred": pred, "n_gold": len(gold), "n_vocab": len(gv),
-                     "ed_all": edit_distance(pred, gold), "ed_vocab": edit_distance(pv, gv),
-                     "n_fs": sum(k == "fingerspelling" for _, _, k in kinds),
-                     "n_end": sum(k == "sentence_end" for _, _, k in kinds)})
+        top1 = lambda s, e: (classify(model, classes, cfg, d, s, e, aspect, margin) or [[None]])[0][0]
+        row = sentence_row(vid, segs, found, vocab, top1, post, d["t"], d["xy"], d["mask"])
+        row["n_end"] = sum(k == "sentence_end" for _, _, k in kinds)
+        rows.append(row)
 
     def summ(rs):
         g, v = sum(r["n_gold"] for r in rs), sum(r["n_vocab"] for r in rs)
@@ -252,9 +264,12 @@ def main():
     s.add_argument("--iou", type=float, default=0.5)
     s.add_argument("--margin", type=float, default=0.5)
     s.add_argument("--out", default="")
+    s.add_argument("--post", default="", help="후처리(segment_post.PostConfig), 예: frag_s=0.3,gap_s=0.1,dedup_gap_s=0.3")
     a = ap.parse_args()
     if a.cmd == "sentences":
-        res = sentences(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou, a.margin)
+        post = sp.PostConfig.parse(a.post) if a.post else None
+        res = sentences(a.npz_dir, load_labels(a.labels, a.names), a.word, a.boundary, a.iou, a.margin, post)
+        res["post"] = a.post
         print({k: v for k, v in res.items() if k != "rows"})
         if a.out:
             with open(a.out, "w", encoding="utf-8") as f:
