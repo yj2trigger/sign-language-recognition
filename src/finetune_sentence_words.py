@@ -79,15 +79,25 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4, help="원래 학습 2e-3 의 10분의 1")
     ap.add_argument("--margin", type=float, default=0.0)
     ap.add_argument("--bank", type=int, default=4)
+    ap.add_argument("--replay-dirs", nargs="*", default=[], help="섞을 원래 단어 특징 폴더(기본 모델의 학습 수행자 것만)")
+    ap.add_argument("--replay-n", type=int, default=0, help="그 폴더에서 무작위로 뽑아 섞을 단어 클립 수(망각 방지)")
     a = ap.parse_args()
     model, classes, cfg, vocab = load_word(a.base)
     clips = sentence_clips([p.split(",", 1) for p in a.train], vocab, a.margin)
     print("문장 속 단어 클립 %d개(서로 다른 단어 %d개)" % (len(clips), len({c["word"] for c in clips})), flush=True)
+    if a.replay_n:
+        words = ds.load_clips(a.replay_dirs, classes)
+        test = set(torch.load(a.base, weights_only=False)["split"]["test"])
+        assert not any(c["signer"] in test for c in words), "재생 데이터에 시험 수행자가 섞임"
+        pick = np.random.default_rng(0).choice(len(words), min(a.replay_n, len(words)), replace=False)
+        clips += [words[i] for i in pick]
+        print("원래 단어 클립 %d개 섞음(후보 %d개, 수행자 %s)" % (len(pick), len(words), sorted({c["signer"] for c in words})), flush=True)
+        del words
     model, n = finetune(model, clips, classes, cfg, a.epochs, a.lr, a.bank)
     ck = torch.load(a.base, weights_only=False)
     ck = dict(ck, state=copy.deepcopy(model.state_dict()),
               finetune={"base": a.base, "train": a.train, "epochs": a.epochs, "lr": a.lr, "margin": a.margin, "bank": a.bank,
-                        "n_clips": n})
+                        "n_clips": n, "replay_dirs": a.replay_dirs, "replay_n": a.replay_n})
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     torch.save(ck, a.out)
     print("저장:", a.out)
