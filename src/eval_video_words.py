@@ -133,6 +133,16 @@ def edit_distance(a, b):
     return d[-1]
 
 
+def lcs(a, b):
+    """순서를 지키며 맞춘 개수(최장 공통 부분열 길이)."""
+    d = [0] * (len(b) + 1)
+    for x in a:
+        prev = 0
+        for j, y in enumerate(b, 1):
+            prev, d[j] = d[j], (prev + 1 if x == y else max(d[j], d[j - 1]))
+    return d[-1]
+
+
 def sentence_row(vid, segs, found, vocab, top1, post=None, t=None, xy=None, mask=None, mot=None):
     """영상 하나 채점. segs = 정답 [(시작, 끝, 번호)], found = 탐지 구간 [(시작, 끝, 종류)](문장 끝 제외),
     top1(s, e) -> 단어 번호 또는 None. post(segment_post.PostConfig)를 주면 분류 전후 후처리를 한다."""
