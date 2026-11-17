@@ -137,14 +137,34 @@ def make_segmenter(spec):
     return boundary.BoundaryDetector(None if spec == "rule" else spec)
 
 
-def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_s=10.0, margin=0.5, fs_reader=None):
+def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_s=10.0, margin=0.5, fs_reader=None, rec=None):
     """루프 본체. 반환: (결과 [(영상 시각 끝, 단어, 확률, 지연 ms)], 프레임 처리 ms 목록, 버린 프레임 수).
     margin: 분류할 때 구간 앞뒤로 더 넣는 초(학습은 ±0.5초, 이어서 수어하면 0이 낫다 — T-061).
-    fs_reader: (xy, mask) -> 글자열. 주면 탐지기가 지문자로 판정한 구간은 단어 분류 대신 여기로 보낸다."""
+    fs_reader: (xy, mask) -> 글자열. 주면 탐지기가 지문자로 판정한 구간은 단어 분류 대신 여기로 보낸다.
+    rec: dict 를 주면 rec['on'] 이 참일 때 프레임마다 시각·관절 53점·얼굴 33점(영상 화면은 저장하지 않음)과 인식 결과를 쌓는다.
+         Ctrl+C 로 끊겨도(KeyboardInterrupt 를 잡아 정상 반환) 쌓은 만큼 호출한 쪽이 저장할 수 있다."""
     segmenter = segmenter or HandRaiseSegmenter()
+    rec = {} if rec is None else rec
+    on = bool(rec.get("on"))
     seg_face = getattr(segmenter, "uses_face", False)   # BoundaryDetector 는 얼굴을 문장 끝 보조 단서로 쓴다
-    face = cfg.get("face", False) or seg_face            # 분류기·탐지기 중 하나라도 쓰면 얼굴을 뽑는다(버퍼 b[3], b[4])
+    face = cfg.get("face", False) or seg_face or on      # 분류기·탐지기·녹화 중 하나라도 쓰면 얼굴을 뽑는다(버퍼 b[3], b[4])
     buf, out, proc_ms, dropped = [], [], [], 0
+    rec.update(t=[], xy=[], mask=[], face=[], face_mask=[], ev=[], wh=None, dropped=0)
+
+    def event(kind, seg, tick, word=-1, prob=0.0, text=""):
+        if on:
+            rec["ev"].append((kind, seg[0], seg[1], tick, -1 if word is None else int(word), float(prob), text))
+    try:
+        _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs_reader, rec, on, seg_face, face,
+              buf, out, proc_ms, event)
+    except KeyboardInterrupt:
+        print("중단(Ctrl+C) — 지금까지의 결과를 정리합니다", flush=True)
+    return out, proc_ms, rec["dropped"]
+
+
+def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs_reader, rec, on, seg_face, face,
+          buf, out, proc_ms, event):
+    dropped = 0
     with mp.solutions.holistic.Holistic(static_image_mode=False, model_complexity=1) as h:
         t0, k = time.perf_counter(), 0
         while True:
@@ -155,6 +175,7 @@ def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_
             elif now - tick >= 1 / fps:                  # 처리가 늦어 지나간 박자는 건너뛴다(그 프레임은 버림)
                 skip = int((now - tick) * fps)
                 dropped, k, tick = dropped + skip, k + skip, (k + skip) / fps
+                rec["dropped"] = dropped
             frame = source.frame_at(tick)
             if frame is None:
                 break
@@ -162,24 +183,44 @@ def run(source, model, classes, cfg, fps=15.0, segmenter=None, names=None, keep_
             r = landmarks.process_frame(h, frame, with_face=face)
             proc_ms.append((time.perf_counter() - c) * 1000)
             buf.append((tick, r[0], r[1]) + ((r[4], r[5]) if face else ()))
+            if on:                                       # 좌표만 저장한다(화면 이미지는 r 에 없고 저장하지도 않는다)
+                rec["wh"] = r[3]
+                rec["t"].append(tick), rec["xy"].append(r[0]), rec["mask"].append(r[1])
+                rec["face"].append(r[4]), rec["face_mask"].append(r[5])
             while buf and buf[0][0] < tick - keep_s:
                 buf.pop(0)
             seg = feed_segmenter(segmenter, tick, r, seg_face)
-            if seg and len(seg) == 3 and seg[2] == "sentence_end":     # boundary.BoundaryDetector 의 문장 끝 알림
+            kind = seg[2] if seg and len(seg) == 3 else "word"
+            if seg and kind == "sentence_end":           # boundary.BoundaryDetector 의 문장 끝 알림
                 print("%7.2f초  [문장 끝] %.2f~%.2f초" % (tick, seg[0], seg[1]), flush=True)
-            elif seg and fs_reader and len(seg) == 3 and seg[2] == "fingerspelling":
+                event(kind, seg, tick)
+            elif seg and fs_reader and kind == "fingerspelling":
                 sel = [b for b in buf if seg[0] <= b[0] <= seg[1]]
                 text = fs_reader(np.stack([b[1] for b in sel]), np.stack([b[2] for b in sel])) if len(sel) >= 2 else ""
                 print("%7.2f초  [지문자] %s  구간 %.2f~%.2f초  지연 %.0f ms" % (
                     tick, text or "(인식 실패)", seg[0], seg[1], (time.perf_counter() - t0 - seg[1]) * 1000), flush=True)
+                event(kind, seg, tick, text=text)
             elif seg:
                 word, prob = classify(model, classes, cfg, buf, seg[0], seg[1], margin)
                 lat = (time.perf_counter() - t0 - seg[1]) * 1000
                 out.append((seg[1], word, prob, lat))
                 label = names.get(word, word) if names else word
                 print("%7.2f초  %s (%.2f)  구간 %.2f~%.2f초  지연 %.0f ms" % (tick, label, prob, seg[0], seg[1], lat), flush=True)
+                event(kind, seg, tick, word, prob)
             k += 1
-    return out, proc_ms, dropped
+
+
+def save_recording(rec, path, fps):
+    """rec(run 이 쌓은 것)를 npz 로 저장. 키는 eval_video_words.py extract 와 같아서(t, xy, mask, face, face_mask, wh, src_fps)
+    그대로 eval·sentences 와 render_skeleton.py 에 넣을 수 있다. ev_* 는 그때 낸 인식 결과(단어 번호·확률·지문자 글자)."""
+    ev = rec["ev"]
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    np.savez(path, t=np.array(rec["t"], np.float64), xy=np.stack(rec["xy"]), mask=np.stack(rec["mask"]),
+             face=np.stack(rec["face"]), face_mask=np.stack(rec["face_mask"]), wh=np.asarray(rec["wh"], np.int32),
+             src_fps=fps, ev_kind=np.array([e[0] for e in ev], dtype=str), ev_start=np.array([e[1] for e in ev], np.float64),
+             ev_end=np.array([e[2] for e in ev], np.float64), ev_tick=np.array([e[3] for e in ev], np.float64),
+             ev_word=np.array([e[4] for e in ev], np.int64), ev_prob=np.array([e[5] for e in ev], np.float64),
+             ev_text=np.array([e[6] for e in ev], dtype=str))
 
 
 def main():
@@ -192,6 +233,7 @@ def main():
     ap.add_argument("--boundary", default="", help="구간 탐지기: 비우면 손 높이 규칙, rule 이면 BoundaryDetector 규칙 모드, "
                                                    "그 밖은 train_boundary.py 가 저장한 .pt")
     ap.add_argument("--margin", type=float, default=0.5, help="분류할 때 구간 앞뒤로 더 넣는 초(이어서 수어하면 0 권장)")
+    ap.add_argument("--record", default="", help="관절 좌표(몸 11·손 42·얼굴 33)와 인식 결과를 이 npz 로 저장. 영상 화면은 저장하지 않는다")
     a = ap.parse_args()
     fs_reader = None
     if os.environ.get("FINGERSPELLING_CHECKPOINT"):     # 지문자 인식기(팀원 C, feat/2-performance-stage3 의 src 를 PYTHONPATH 에)
@@ -206,11 +248,16 @@ def main():
         with open(a.names, encoding="utf-8-sig") as f:
             names = {int(r[0]): r[1] for r in csv.reader(f) if r and r[0].isdigit()}
     source = CameraClock(a.camera) if a.camera is not None else VideoClock(a.videos)
+    rec = {"on": bool(a.record)}
     out, proc, dropped = run(source, model, classes, cfg, a.fps, segmenter=segmenter, names=names, margin=a.margin,
-                             fs_reader=fs_reader)
+                             fs_reader=fs_reader, rec=rec)
+    if a.record and rec["t"]:
+        save_recording(rec, a.record, a.fps)
+        print("관절 녹화 저장: %s (%d프레임, 인식 결과 %d건)" % (a.record, len(rec["t"]), len(rec["ev"])), flush=True)
     lat = [o[3] for o in out]
-    print("단어 %d개, 프레임 %d장 처리(버림 %d), MediaPipe 중앙값 %.1f ms·p95 %.1f ms" % (
-        len(out), len(proc), dropped, np.median(proc), np.percentile(proc, 95)))
+    if proc:
+        print("단어 %d개, 프레임 %d장 처리(버림 %d), MediaPipe 중앙값 %.1f ms·p95 %.1f ms" % (
+            len(out), len(proc), dropped, np.median(proc), np.percentile(proc, 95)))
     if lat:
         print("지연(단어 끝 -> 결과) 중앙값 %.0f ms, p95 %.0f ms" % (np.median(lat), np.percentile(lat, 95)))
 
