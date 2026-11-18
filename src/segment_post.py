@@ -6,6 +6,7 @@
    켜면 탐지기의 조각별 지문자 판정은 쓰지 않는다. 움직임은 탐지기와 같은 FeatureExtractor 값(프레임마다 finger, wrist_speed).
 ③ 같은 단어 연속 합치기(분류 뒤): 같은 번호가 간격 dedup_gap_s 이내로 이어지면 하나로 센다.
 값이 0 이면 그 단계는 끈다(기본값 = 후처리 없음, 예전 결과와 같음).
+fs_judge = 판별기 json 경로(fs_judge.py, T-073)를 주면 ②의 판정을 길이·비율 규칙 대신 판별기로 한다(묶는 방법은 같음).
 """
 from dataclasses import dataclass, fields
 
@@ -22,6 +23,7 @@ class PostConfig:
     fs_min_s: float = 0.6
     fs_ratio: float = 2.0
     dedup_gap_s: float = 0.0
+    fs_judge: str = ""
 
     @classmethod
     def parse(cls, spec):
@@ -32,7 +34,7 @@ class PostConfig:
             k, v = part.split("=")
             if k.strip() not in names:
                 raise ValueError("모르는 후처리 값: %s (가능: %s)" % (k, sorted(names)))
-            kw[k.strip()] = float(v)
+            kw[k.strip()] = v.strip() if k.strip() == "fs_judge" else float(v)
         return cls(**kw)
 
 
@@ -60,8 +62,19 @@ def merge_fragments(segs, cfg):
     return [tuple(x) for x in out]
 
 
-def group_fingerspelling(segs, t, mot, cfg):
-    """이어진 조각 묶음을 지문자 하나로 볼지 판정. mot = motion() 결과. 지문자가 아닌 조각은 'word' 로 둔다."""
+_JUDGES = {}
+
+
+def _judge(path):
+    if path not in _JUDGES:
+        import fs_judge   # fs_judge 가 이 모듈을 import 하므로 여기서
+        _JUDGES[path] = fs_judge.Judge.load(path)
+    return _JUDGES[path]
+
+
+def group_fingerspelling(segs, t, mot, cfg, xy=None, mask=None):
+    """이어진 조각 묶음을 지문자 하나로 볼지 판정. mot = motion() 결과. 지문자가 아닌 조각은 'word' 로 둔다.
+    cfg.fs_judge 가 있으면 판별기(xy, mask 필요), 없으면 길이·손가락/손목 비율 규칙."""
     if not cfg.fs_gap_s or not segs:
         return list(segs)
     groups, cur = [], [segs[0]]
@@ -75,9 +88,14 @@ def group_fingerspelling(segs, t, mot, cfg):
     out = []
     for g in groups:
         s, e = g[0][0], g[-1][1]
-        sel = (t >= s) & (t <= e)
-        finger, wrist = mot[sel, 0].sum(), mot[sel, 1].sum()
-        if e - s >= cfg.fs_min_s and finger >= cfg.fs_ratio * max(wrist, 1e-6):
+        if cfg.fs_judge:
+            import fs_judge
+            yes = _judge(cfg.fs_judge)(fs_judge.features(t, xy, mask, mot, g))
+        else:
+            sel = (t >= s) & (t <= e)
+            finger, wrist = mot[sel, 0].sum(), mot[sel, 1].sum()
+            yes = e - s >= cfg.fs_min_s and finger >= cfg.fs_ratio * max(wrist, 1e-6)
+        if yes:
             out.append((s, e, "fingerspelling"))
         else:
             out += [(a, b, "word" if k == "fingerspelling" else k) for a, b, k in g]
@@ -102,5 +120,5 @@ def apply(segs, t, xy, mask, cfg, mot=None):
     """분류 전 단계(①②). segs 는 문장 끝을 뺀 [(시작, 끝, 종류)]."""
     segs = merge_fragments(segs, cfg)
     if cfg.fs_gap_s:
-        segs = group_fingerspelling(segs, t, motion(t, xy, mask) if mot is None else mot, cfg)
+        segs = group_fingerspelling(segs, t, motion(t, xy, mask) if mot is None else mot, cfg, xy, mask)
     return segs

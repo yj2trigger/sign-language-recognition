@@ -5,6 +5,7 @@
 평가: 지문자 잡음 = 지문자 영상을 하나씩 빼고 학습해 그 영상에서 지문자 판정 구간이 영상 길이 절반 이상을 덮는 비율,
       오판 = 문장 수행자 한 명을 빼고 학습해 그 사람 문장 100개당 지문자 판정 수. 기준선 = 같은 묶음에 지금 규칙.
 사용: python src/fs_judge.py --fs-npz <지문자 npz 폴더> --n-sent 400 --out <결과.json> --model <판별기.json>
+     수행자별 판별기: ... --out x --target-fp 0.005 --save-heldout <폴더>/fs_judge-s%d.json
 판별기 json 은 표준화 평균·표준편차·계수·절편·문턱값만 담는다(피클 없음).
 """
 import argparse
@@ -129,6 +130,8 @@ def main():
     ap.add_argument("--n-sent", type=int, default=400, help="문장 수행자마다 쓸 문장 수(앞에서부터)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="")
+    ap.add_argument("--target-fp", type=float, default=0.03)
+    ap.add_argument("--save-heldout", default="", help="평가 없이 문장 수행자 s 를 뺀 판별기를 이 경로 형식(%%d 에 s)으로 저장")
     a = ap.parse_args()
     fs = []
     for p in sorted(glob.glob(os.path.join(a.fs_npz, "*.npz"))):
@@ -146,6 +149,11 @@ def main():
         print("문장 수행자 %d: 문장 %d개, 후보 묶음 %d개" % (s, len(rows), sum(map(len, rows))), flush=True)
     pos = lambda clips: [f for c in clips for _, f, _, _ in c["c"] if f[0] >= 0.6]
     neg = lambda ss: [f for s in ss for row in sent[s] for _, f, _, _ in row]
+    if a.save_heldout:
+        for s in SEN:
+            fit(pos(fs), neg([x for x in SEN if x != s]), a.target_fp).to_json(a.save_heldout % s)
+            print("저장:", a.save_heldout % s)
+        return
     # 지문자 잡음: 영상 하나씩 빼고(같은 영상의 탐지기 3개 결과 모두 함께 뺌)
     hit_j = hit_r = 0
     for i, c in enumerate(fs):

@@ -37,3 +37,17 @@ def test_dedup():
     c = sp.PostConfig(dedup_gap_s=0.3)
     items = [(0, 0.5, "word", 7), (0.6, 1.0, "word", 7), (1.5, 2.0, "word", 7), (2.1, 2.5, "word", 8)]
     assert sp.dedup(items, c) == [(0, 1.0, "word", 7), (1.5, 2.0, "word", 7), (2.1, 2.5, "word", 8)]
+
+
+def test_group_fingerspelling_judge(tmp_path):
+    """fs_judge 를 주면 규칙 대신 판별기로 판정한다(계수 0, 절편으로 항상 예/아니오)."""
+    import json
+    t = np.arange(0, 4, 1 / 15)
+    xy, mask = np.random.default_rng(0).random((len(t), 53, 2)), np.ones((len(t), 53), bool)
+    mot = np.zeros((len(t), 2))
+    segs = [(1.0, 1.4, "word"), (1.5, 1.9, "word")]
+    for b, want in ((10.0, [(1.0, 1.9, "fingerspelling")]), (-10.0, segs)):
+        p = tmp_path / ("j%d.json" % b)
+        json.dump({"mean": [0] * 14, "std": [1] * 14, "coef": [0] * 14, "intercept": b, "thr": 0.5}, open(p, "w"))
+        c = sp.PostConfig.parse("fs_gap_s=0.2,fs_judge=%s" % p)
+        assert sp.group_fingerspelling(segs, t, mot, c, xy, mask) == want     # 규칙이면 손가락 움직임 0 이라 지문자 아님
