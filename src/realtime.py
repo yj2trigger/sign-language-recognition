@@ -306,6 +306,9 @@ def _loop(source, model, classes, cfg, fps, segmenter, names, keep_s, margin, fs
         say(scorer.start_line())
     tick = 0.0
     with mp.solutions.holistic.Holistic(static_image_mode=False, model_complexity=1) as h:
+        if ui is not None and ui.window and ui.countdown > 0 and not ui.wait_start(source, h, face):
+            print("미리보기에서 그만둠 — 녹화하지 않음", flush=True)
+            return
         t0 = clock["t0"] = time.perf_counter()
         try:
             _frames(source, h, fps, segmenter, keep_s, rec, on, seg_face, face, buf, proc_ms, stream, handle, event, scorer, say,
@@ -399,6 +402,8 @@ def main():
     ap.add_argument("--ui", action="store_true", help="시연 화면(관절 + 대본·결과·점수 패널). 창에서 q 로 끝낸다")
     ap.add_argument("--show-camera", action="store_true", help="시연 화면 왼쪽에 실제 카메라를 깔고 관절을 겹친다(기본은 관절만)")
     ap.add_argument("--demo-video", default="", help="시연 화면을 이 mp4 로 저장")
+    ap.add_argument("--countdown", type=float, default=0, help="--ui 와 함께: 미리보기(저장·인식 없음)에서 Space 를 누르면 이 초를 센 뒤 시작")
+    ap.add_argument("--follow", default="", help="--ui 와 함께: 창 왼쪽에 이 따라 할 영상을 시작 시각에 맞춰 재생(시연 영상에는 넣지 않음)")
     a = ap.parse_args()
     post = sp.PostConfig.parse(a.post) if a.post else None
     scorer = None
@@ -425,9 +430,15 @@ def main():
     ui = None
     if a.ui or a.demo_video:
         from demo_ui import DemoUI
-        ui = DemoUI(names, scorer, show_camera=a.show_camera, video_path=a.demo_video, fps=a.fps, window=a.ui)
+        ui = DemoUI(names, scorer, show_camera=a.show_camera, video_path=a.demo_video, fps=a.fps, window=a.ui,
+                    countdown=a.countdown, follow=VideoClock([a.follow]) if a.follow else None)
     out, proc, dropped = run(source, model, classes, cfg, a.fps, segmenter=segmenter, names=names, margin=a.margin,
                              fs_reader=fs_reader, rec=rec, post=post, scorer=scorer, ui=ui)
+    if ui is not None and ui.restart:                    # r: 녹화 버리고 바깥 루프가 같은 세션을 다시 띄우게
+        if a.demo_video and os.path.exists(a.demo_video):
+            os.remove(a.demo_video)
+        print("다시 시작 — 이번 녹화는 버림", flush=True)
+        raise SystemExit(3)
     if a.demo_video:
         print("시연 영상 저장: %s (%d프레임)" % (a.demo_video, ui.n_written), flush=True)
     if a.record and rec["t"]:
